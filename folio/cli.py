@@ -4,29 +4,17 @@ import sys
 import time
 from pathlib import Path
 
-USE_COLOR = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+from folio.ui import ui
 
+USAGE = f"""{ui.badge()} {ui.bold("Markdown -> Typst PDF Document Compiler")}
 
-def style(text: str, code: str) -> str:
-    return f"\033[{code}m{text}\033[0m" if USE_COLOR else text
-
-
-BLUE, GREEN, BOLD_GREEN, YELLOW, RED, BOLD = "1;34", "32", "1;32", "33", "1;31", "1"
-
-
-def status(icon: str, msg: str, code: str = BOLD) -> str:
-    return f"{style('❄️  [folio]', BLUE)} {style(f'{icon} {msg}', code)}"
-
-
-USAGE = f"""{style("❄️  [folio]", BLUE)} {style("Markdown -> Typst PDF Document Compiler", BOLD)}
-
-{style("Usage:", BLUE)}
+{ui.blue("Usage:")}
   folio [file.md] [options]          Build PDF from Markdown
   folio build [file.md] [options]    Explicit build command
   folio watch [file.md] [options]    Watch for changes and continuously rebuild
   folio init [name] [options]        Scaffold starter template.typ and markdown file
 
-{style("Options:", BLUE)}
+{ui.blue("Options:")}
   -o, --output PATH      Specify output PDF filename
   -t, --template PATH    Use custom Typst template file
   -w, --watch            Watch mode: recompile automatically on file changes
@@ -35,7 +23,7 @@ USAGE = f"""{style("❄️  [folio]", BLUE)} {style("Markdown -> Typst PDF Docum
   -h, --help             Show this help message and exit
   -v, --version          Show version information and exit
 
-{style("Examples:", BLUE)}
+{ui.blue("Examples:")}
   folio                              # Auto-discover input.md or unique *.md
   folio report.md                    # Compile report.md -> report.pdf
   folio report.md -o final.pdf       # Custom output destination
@@ -58,7 +46,7 @@ def find_target_markdown(arg_path: str | None) -> Path:
     if arg_path:
         target = Path(arg_path)
         if not target.exists():
-            print(status("✘", f"File '{arg_path}' not found.", RED), file=sys.stderr)
+            ui.error(f"File '{arg_path}' not found.")
             sys.exit(1)
         return target
 
@@ -70,20 +58,10 @@ def find_target_markdown(arg_path: str | None) -> Path:
         return md_files[0]
     elif len(md_files) > 1:
         names = ", ".join(f.name for f in md_files)
-        print(
-            status(
-                "✘",
-                f"Multiple Markdown files found ({names}). Specify one: folio <file.md>",
-                RED,
-            ),
-            file=sys.stderr,
-        )
+        ui.error(f"Multiple Markdown files found ({names}). Specify one: folio <file.md>")
         sys.exit(1)
 
-    print(
-        status("✘", "No Markdown file found. Run 'folio init' to scaffold a document.", RED),
-        file=sys.stderr,
-    )
+    ui.error("No Markdown file found. Run 'folio init' to scaffold a document.")
     sys.exit(1)
 
 
@@ -95,7 +73,7 @@ def resolve_template(custom_template: str | None) -> tuple[Path, bool]:
     if custom_template:
         t_path = Path(custom_template)
         if not t_path.exists():
-            print(status("✘", f"Custom template '{custom_template}' not found.", RED), file=sys.stderr)
+            ui.error(f"Custom template '{custom_template}' not found.")
             sys.exit(1)
         return t_path, False
 
@@ -103,22 +81,13 @@ def resolve_template(custom_template: str | None) -> tuple[Path, bool]:
     if local_template.exists():
         return local_template, False
 
-    # Check bundled fallback
     bundled = get_bundled_assets_dir() / "template.typ"
     if bundled.exists():
-        # Copy bundled template locally as temporary file so Typst root can import it cleanly
         temp_tpl = Path("_folio_template.typ")
         temp_tpl.write_text(bundled.read_text(encoding="utf-8"), encoding="utf-8")
         return temp_tpl, True
 
-    print(
-        status(
-            "✘",
-            "template.typ not found. Run 'folio init' to scaffold a template.",
-            RED,
-        ),
-        file=sys.stderr,
-    )
+    ui.error("template.typ not found. Run 'folio init' to scaffold a template.")
     sys.exit(1)
 
 
@@ -144,7 +113,7 @@ def build_pdf(
 
     try:
         if not quiet:
-            print(status("⚙️ ", f"Parsing '{md_path.name}' via Pandoc...", BLUE))
+            ui.action(f"Parsing '{md_path.name}' via Pandoc...", symbol="⚙️ ")
 
         res_pandoc = subprocess.run(
             [
@@ -161,7 +130,7 @@ def build_pdf(
             text=True,
         )
         if res_pandoc.returncode != 0:
-            print(status("✘", f"Pandoc conversion failed:\n{res_pandoc.stderr.strip()}", RED), file=sys.stderr)
+            ui.error(f"Pandoc conversion failed:\n{res_pandoc.stderr.strip()}")
             return False
 
         body_content = body_path.read_text(encoding="utf-8")
@@ -179,7 +148,7 @@ def build_pdf(
             run_env.pop("TYPST_ROOT", None)
 
         if not quiet:
-            print(status("⚙️ ", f"Compiling PDF: {out_pdf}...", BLUE))
+            ui.action(f"Compiling PDF: {out_pdf}...", symbol="⚙️ ")
 
         res = subprocess.run(
             ["typst", "compile", "--root", ".", str(entry_path), out_pdf],
@@ -189,13 +158,13 @@ def build_pdf(
         )
 
         if res.returncode == 0:
-            print(status("✔", f"Successfully compiled {out_pdf}", BOLD_GREEN))
+            ui.success(f"Successfully compiled {out_pdf}")
             if open_after:
                 open_cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
                 subprocess.Popen([open_cmd, out_pdf], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
         else:
-            print(status("✘", f"Typst compilation failed:\n{res.stderr.strip()}", RED), file=sys.stderr)
+            ui.error(f"Typst compilation failed:\n{res.stderr.strip()}")
             return False
 
     finally:
@@ -220,7 +189,7 @@ def watch_pdf(
 ):
     """Watches markdown file and template for changes, recompiling automatically."""
     md_path = find_target_markdown(target_file)
-    print(status("👁️ ", f"Watching '{md_path.name}' for changes (Ctrl+C to stop)...", BLUE))
+    ui.info(f"Watching '{md_path.name}' for changes (Ctrl+C to stop)...", symbol="👁️ ")
 
     # Initial build
     build_pdf(
@@ -251,7 +220,7 @@ def watch_pdf(
 
             if changed:
                 timestamp = time.strftime("%H:%M:%S")
-                print(status("🔄", f"[{timestamp}] Change detected, rebuilding...", YELLOW))
+                ui.action(f"[{timestamp}] Change detected, rebuilding...", symbol="🔄")
                 build_pdf(
                     target_file=str(md_path),
                     output_filename=output_filename,
@@ -260,7 +229,8 @@ def watch_pdf(
                     quiet=True,
                 )
     except KeyboardInterrupt:
-        print(f"\n{status('🛑', 'Watch mode stopped.', BLUE)}")
+        print()
+        ui.info("Watch mode stopped.", symbol="🛑")
 
 
 def init_workspace(name: str | None = None, force: bool = False):
@@ -278,10 +248,10 @@ def init_workspace(name: str | None = None, force: bool = False):
             if sys.stdin.isatty():
                 ans = input(f"⚠️  {dest.name} already exists. Overwrite? [y/N]: ").strip().lower()
                 if ans not in ("y", "yes"):
-                    print(f"Skipping {dest.name}")
+                    ui.warn(f"Skipped {dest.name}")
                     continue
             else:
-                print(f"Error: {dest.name} already exists. Pass --force to overwrite.", file=sys.stderr)
+                ui.error(f"{dest.name} already exists. Pass --force to overwrite.")
                 sys.exit(1)
 
         if src.exists():
@@ -289,11 +259,11 @@ def init_workspace(name: str | None = None, force: bool = False):
             if name and dest == dest_doc:
                 content = content.replace("Document Title", name.replace("_", " ").title())
             dest.write_text(content, encoding="utf-8")
-            print(status("✔", f"Scaffolded {dest.name}", BOLD_GREEN))
+            ui.success(f"Scaffolded {dest.name}")
         else:
-            print(status("✘", f"Source asset {src} not found.", RED), file=sys.stderr)
+            ui.error(f"Source asset {src} not found.")
 
-    print(status("🚀", f"Ready! Run 'folio {doc_name}' or 'folio watch {doc_name}' to build.", BLUE))
+    ui.info(f"Ready! Run 'folio {doc_name}' or 'folio watch {doc_name}' to build.", symbol="🚀")
 
 
 def main():
@@ -307,7 +277,6 @@ def main():
         print("folio 0.1.0")
         sys.exit(0)
 
-    # Subcommands
     cmd = args[0]
     rest = args[1:]
 
@@ -318,7 +287,6 @@ def main():
         init_workspace(name, force=force)
         sys.exit(0)
 
-    # Watch or build
     is_watch = cmd == "watch"
     if is_watch:
         rest_args = rest
@@ -327,7 +295,6 @@ def main():
     else:
         rest_args = args
 
-    # Extract options
     target_file = None
     output_filename = None
     custom_template = None
