@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Nix artifacts
+result
+result-*
+.direnv/
+
+# Folio temporary artifacts
+_body.typ
+_entry.typ
+_folio_template.typ
+*.pdf
