@@ -9,7 +9,14 @@ class UI:
         self.app_name = app_name
         self.icon = icon
         self.badge_color = badge_color
-        self.use_color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+    @property
+    def use_color(self) -> bool:
+        if "NO_COLOR" in os.environ:
+            return False
+        if os.environ.get("CLICOLOR_FORCE", "0") != "0" or "FORCE_COLOR" in os.environ:
+            return True
+        return sys.stdout.isatty() or os.environ.get("COLORTERM") in ("truecolor", "24bit")
 
     def style(self, text: str, code: str) -> str:
         return f"\033[{code}m{text}\033[0m" if self.use_color else text
