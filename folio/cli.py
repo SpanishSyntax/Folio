@@ -11,23 +11,27 @@ USAGE = f"""{ui.badge()} {ui.bold("Markdown -> Typst PDF Document Compiler")}
 {ui.blue("Usage:")}
   folio [file.md] [options]          Build PDF from Markdown
   folio build [file.md] [options]    Explicit build command
-  folio watch [file.md] [options]    Watch for changes and continuously rebuild
   folio init [name] [options]        Scaffold starter template.typ and markdown file
 
 {ui.blue("Options:")}
   -o, --output PATH      Specify output PDF filename
   -t, --template PATH    Use custom Typst template file
   -w, --watch            Watch mode: recompile automatically on file changes
+  --root PATH            Typst compilation root directory (default: current directory)
+  --font-path PATH       Additional directory containing fonts for Typst
   --open                 Open generated PDF in system viewer after build
   -f, --force            Overwrite existing files during init without prompting
+  --color MODE           Color output mode: auto, always, never (default: auto)
+  --no-color             Disable colored output
   -h, --help             Show this help message and exit
-  -v, --version          Show version information and exit
+  -V, -v, --version      Show version information and exit
 
 {ui.blue("Examples:")}
   folio                              # Auto-discover input.md or unique *.md
   folio report.md                    # Compile report.md -> report.pdf
   folio report.md -o final.pdf       # Custom output destination
-  folio watch document.md            # Live recompile on save
+  folio report.md -w                 # Live recompile on save (watch mode)
+  folio report.md --root ..          # Pass compilation root directory to Typst
   folio init my_paper                # Scaffold template.typ and my_paper.md
 """
 
@@ -95,6 +99,8 @@ def build_pdf(
     target_file: str | None = None,
     output_filename: str | None = None,
     custom_template: str | None = None,
+    root_path: str | None = None,
+    font_path: str | None = None,
     open_after: bool = False,
     quiet: bool = False,
 ) -> bool:
@@ -150,8 +156,15 @@ def build_pdf(
         if not quiet:
             ui.action(f"Compiling PDF: {out_pdf}...", symbol="⚙️ ")
 
+        compile_cmd = ["typst", "compile"]
+        compile_root = str(Path(root_path).resolve()) if root_path else "."
+        compile_cmd.extend(["--root", compile_root])
+        if font_path:
+            compile_cmd.extend(["--font-path", str(Path(font_path).resolve())])
+        compile_cmd.extend([str(entry_path), out_pdf])
+
         res = subprocess.run(
-            ["typst", "compile", "--root", ".", str(entry_path), out_pdf],
+            compile_cmd,
             env=run_env,
             capture_output=True,
             text=True,
@@ -185,6 +198,8 @@ def watch_pdf(
     target_file: str | None = None,
     output_filename: str | None = None,
     custom_template: str | None = None,
+    root_path: str | None = None,
+    font_path: str | None = None,
     open_after: bool = False,
 ):
     """Watches markdown file and template for changes, recompiling automatically."""
@@ -196,6 +211,8 @@ def watch_pdf(
         target_file=str(md_path),
         output_filename=output_filename,
         custom_template=custom_template,
+        root_path=root_path,
+        font_path=font_path,
         open_after=open_after,
     )
 
@@ -225,6 +242,8 @@ def watch_pdf(
                     target_file=str(md_path),
                     output_filename=output_filename,
                     custom_template=custom_template,
+                    root_path=root_path,
+                    font_path=font_path,
                     open_after=False,
                     quiet=True,
                 )
@@ -263,22 +282,38 @@ def init_workspace(name: str | None = None, force: bool = False):
         else:
             ui.error(f"Source asset {src} not found.")
 
-    ui.info(f"Ready! Run 'folio {doc_name}' or 'folio watch {doc_name}' to build.", symbol="🚀")
+    ui.info(f"Ready! Run 'folio {doc_name}' or 'folio {doc_name} -w' to build.", symbol="🚀")
+
+
+def handle_color_args():
+    for i, arg in enumerate(sys.argv[1:]):
+        if arg == "--no-color":
+            ui.set_color_mode("never")
+        elif arg.startswith("--color="):
+            ui.set_color_mode(arg.split("=", 1)[1])
+        elif arg == "--color" and i + 1 < len(sys.argv[1:]):
+            ui.set_color_mode(sys.argv[1:][i + 1])
 
 
 def main():
+    handle_color_args()
     args = sys.argv[1:]
 
-    if not args or args[0] in ["-h", "--help", "help"]:
+    if any(a in ("-h", "--help", "help") for a in args):
         print(USAGE)
         sys.exit(0)
 
-    if args[0] in ["-v", "--version", "version"]:
-        print("folio 0.1.0")
+    if any(a in ("-V", "-v", "--version", "version") for a in args):
+        print(f"{ui.badge()} {ui.bold('v0.1.0')}")
         sys.exit(0)
 
-    cmd = args[0]
-    rest = args[1:]
+    if not args:
+        if not Path("input.md").exists() and not list(Path(".").glob("*.md")):
+            print(USAGE)
+            sys.exit(0)
+
+    cmd = args[0] if args else ""
+    rest = args[1:] if args else []
 
     if cmd == "init":
         force = "-f" in rest or "--force" in rest
@@ -287,17 +322,14 @@ def main():
         init_workspace(name, force=force)
         sys.exit(0)
 
-    is_watch = cmd == "watch"
-    if is_watch:
-        rest_args = rest
-    elif cmd == "build":
-        rest_args = rest
-    else:
-        rest_args = args
+    rest_args = rest if cmd == "build" else args
 
     target_file = None
     output_filename = None
     custom_template = None
+    root_path = None
+    font_path = None
+    is_watch = False
     open_after = False
 
     i = 0
@@ -319,6 +351,21 @@ def main():
                 i += 1
         elif a.startswith("--template="):
             custom_template = a.split("=", 1)[1]
+        elif a == "--root":
+            if i + 1 < len(rest_args):
+                root_path = rest_args[i + 1]
+                i += 1
+        elif a.startswith("--root="):
+            root_path = a.split("=", 1)[1]
+        elif a == "--font-path":
+            if i + 1 < len(rest_args):
+                font_path = rest_args[i + 1]
+                i += 1
+        elif a.startswith("--font-path="):
+            font_path = a.split("=", 1)[1]
+        elif a in ("--color", "--no-color") or a.startswith("--color="):
+            if a == "--color" and i + 1 < len(rest_args):
+                i += 1
         elif a in ("-h", "--help"):
             print(USAGE)
             sys.exit(0)
@@ -332,6 +379,8 @@ def main():
             target_file=target_file,
             output_filename=output_filename,
             custom_template=custom_template,
+            root_path=root_path,
+            font_path=font_path,
             open_after=open_after,
         )
     else:
@@ -339,6 +388,8 @@ def main():
             target_file=target_file,
             output_filename=output_filename,
             custom_template=custom_template,
+            root_path=root_path,
+            font_path=font_path,
             open_after=open_after,
         )
         sys.exit(0 if success else 1)

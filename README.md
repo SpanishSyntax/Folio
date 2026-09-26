@@ -11,7 +11,7 @@ Folio is an opinionated, ultra-fast document compiler that turns standard GitHub
 - 🔒 **100% Self-Contained & Hermetic**: Zero host toolchain dependencies. Folio packages and wraps both `pandoc` and `typst` in its Nix closure, guaranteeing identical PDF output on any machine.
 - 🎨 **Modern Typographic Engine**: Out-of-the-box minimal sans-serif design system with Inter, automatic page headers/footers, dynamic margin layouts, callout blocks, and syntax highlighting.
 - 📑 **YAML Frontmatter Integration**: Extracts metadata (`title`, `author`, `dependency`, `date`) from standard Markdown YAML headers directly into document layout headers.
-- 👁️ **Live Watch Mode (`folio watch`)**: Continuous background watcher that detects file saves and automatically re-compiles the PDF in milliseconds.
+- 👁️ **Live Watch Mode (`folio document.md -w`)**: Continuous background watcher that detects file saves and automatically re-compiles the PDF in milliseconds.
 - 📦 **Built-in Template Fallback**: Compiles any standalone `.md` file without requiring a local `template.typ`. If a local template is present, Folio seamlessly uses your custom layout.
 - 🚀 **Instant Scaffolding (`folio init`)**: Generates starter documents (`input.md`) and local `template.typ` files for full layout customization.
 - 🌐 **Universal Portability**: Run anywhere with zero installation using `nix run github:SpanishSyntax/Folio`.
@@ -30,7 +30,7 @@ nix run github:SpanishSyntax/Folio -- document.md
 nix run github:SpanishSyntax/Folio
 
 # Continuous watch mode (recompiles on save)
-nix run github:SpanishSyntax/Folio -- watch document.md
+nix run github:SpanishSyntax/Folio -- document.md -w
 
 # Specify custom PDF output name
 nix run github:SpanishSyntax/Folio -- document.md -o output.pdf
@@ -50,17 +50,20 @@ nix run github:SpanishSyntax/Folio -- init my_report
 Usage:
   folio [file.md] [options]          Build PDF from Markdown
   folio build [file.md] [options]    Explicit build command
-  folio watch [file.md] [options]    Watch for changes and continuously rebuild
   folio init [name] [options]        Scaffold starter template.typ and markdown file
 
 Options:
   -o, --output PATH      Specify output PDF filename
   -t, --template PATH    Use custom Typst template file
   -w, --watch            Watch mode: recompile automatically on file changes
+  --root PATH            Typst compilation root directory (default: current directory)
+  --font-path PATH       Additional directory containing fonts for Typst
   --open                 Open generated PDF in system viewer after build
   -f, --force            Overwrite existing files during init without prompting
+  --color MODE           Color output mode: auto, always, never (default: auto)
+  --no-color             Disable colored output
   -h, --help             Show this help message and exit
-  -v, --version          Show version information and exit
+  -V, -v, --version      Show version information and exit
 ```
 
 ---
