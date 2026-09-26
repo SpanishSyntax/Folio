@@ -33,6 +33,9 @@ class UI:
     def cyan(self, text: str) -> str:
         return self.style(text, "0;36")
 
+    def bold_cyan(self, text: str) -> str:
+        return self.style(text, "1;36")
+
     def green(self, text: str) -> str:
         return self.style(text, "0;32")
 
