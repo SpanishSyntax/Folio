@@ -61,9 +61,26 @@ def find_target_markdown(arg_path: str | None) -> Path:
     if len(md_files) == 1:
         return md_files[0]
     elif len(md_files) > 1:
+        if sys.stdin.isatty():
+            options = [(str(f), f"📄 {f.name}") for f in md_files]
+            chosen = ui.select("Multiple Markdown documents found. Select one to compile:", options)
+            return Path(chosen)
         names = ", ".join(f.name for f in md_files)
         ui.error(f"Multiple Markdown files found ({names}). Specify one: folio <file.md>")
         sys.exit(1)
+
+    if sys.stdin.isatty():
+        action = ui.select(
+            "No Markdown document found. What would you like to do?",
+            [
+                ("init", "Scaffold starter template.typ and input.md (folio init)"),
+                ("exit", "Exit"),
+            ],
+        )
+        if action == "init":
+            init_workspace()
+            return Path("input.md")
+        sys.exit(0)
 
     ui.error("No Markdown file found. Run 'folio init' to scaffold a document.")
     sys.exit(1)
@@ -265,8 +282,14 @@ def init_workspace(name: str | None = None, force: bool = False):
     for dest, src in [(dest_template, template_src), (dest_doc, input_src)]:
         if dest.exists() and not force:
             if sys.stdin.isatty():
-                ans = input(f"⚠️  {dest.name} already exists. Overwrite? [y/N]: ").strip().lower()
-                if ans not in ("y", "yes"):
+                ans = ui.select(
+                    f"{dest.name} already exists. Overwrite?",
+                    [
+                        ("no", f"Keep existing {dest.name}"),
+                        ("yes", f"Overwrite {dest.name}"),
+                    ],
+                )
+                if ans != "yes":
                     ui.warn(f"Skipped {dest.name}")
                     continue
             else:
@@ -309,8 +332,26 @@ def main():
 
     if not args:
         if not Path("input.md").exists() and not list(Path(".").glob("*.md")):
-            print(USAGE)
-            sys.exit(0)
+            if sys.stdin.isatty():
+                action = ui.select(
+                    "No Markdown document found in current directory. What would you like to do?",
+                    [
+                        ("init", "Scaffold starter template.typ and input.md (folio init)"),
+                        ("help", "Show help and command usage"),
+                        ("exit", "Exit"),
+                    ],
+                )
+                if action == "init":
+                    init_workspace()
+                    sys.exit(0)
+                elif action == "help":
+                    print(USAGE)
+                    sys.exit(0)
+                else:
+                    sys.exit(0)
+            else:
+                print(USAGE)
+                sys.exit(0)
 
     cmd = args[0] if args else ""
     rest = args[1:] if args else []
