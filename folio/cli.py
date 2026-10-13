@@ -63,10 +63,14 @@ def find_target_markdown(arg_path: str | None) -> Path:
     elif len(md_files) > 1:
         if sys.stdin.isatty():
             options = [(str(f), f"📄 {f.name}") for f in md_files]
-            chosen = ui.select("Multiple Markdown documents found. Select one to compile:", options)
+            chosen = ui.select(
+                "Multiple Markdown documents found. Select one to compile:", options
+            )
             return Path(chosen)
         names = ", ".join(f.name for f in md_files)
-        ui.error(f"Multiple Markdown files found ({names}). Specify one: folio <file.md>")
+        ui.error(
+            f"Multiple Markdown files found ({names}). Specify one: folio <file.md>"
+        )
         sys.exit(1)
 
     if sys.stdin.isatty():
@@ -191,7 +195,11 @@ def build_pdf(
             ui.success(f"Successfully compiled {out_pdf}")
             if open_after:
                 open_cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
-                subprocess.Popen([open_cmd, out_pdf], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen(
+                    [open_cmd, out_pdf],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             return True
         else:
             ui.error(f"Typst compilation failed:\n{res.stderr.strip()}")
@@ -299,13 +307,17 @@ def init_workspace(name: str | None = None, force: bool = False):
         if src.exists():
             content = src.read_text(encoding="utf-8")
             if name and dest == dest_doc:
-                content = content.replace("Document Title", name.replace("_", " ").title())
+                content = content.replace(
+                    "Document Title", name.replace("_", " ").title()
+                )
             dest.write_text(content, encoding="utf-8")
             ui.success(f"Scaffolded {dest.name}")
         else:
             ui.error(f"Source asset {src} not found.")
 
-    ui.info(f"Ready! Run 'folio {doc_name}' or 'folio {doc_name} -w' to build.", symbol="🚀")
+    ui.info(
+        f"Ready! Run 'folio {doc_name}' or 'folio {doc_name} -w' to build.", symbol="🚀"
+    )
 
 
 def handle_color_args():
@@ -336,7 +348,10 @@ def main():
                 action = ui.select(
                     "No Markdown document found in current directory. What would you like to do?",
                     [
-                        ("init", "Scaffold starter template.typ and input.md (folio init)"),
+                        (
+                            "init",
+                            "Scaffold starter template.typ and input.md (folio init)",
+                        ),
                         ("help", "Show help and command usage"),
                         ("exit", "Exit"),
                     ],
