@@ -1,10 +1,42 @@
+import ctypes
 import os
+import signal
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
+from typing import Any
 
+from folio import __version__
 from folio.ui import ui
+
+
+def _linux_set_pdeathsig():
+    """Ensures child subprocesses receive SIGTERM if the parent Python process dies."""
+    if sys.platform.startswith("linux"):
+        try:
+            libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            PR_SET_PDEATHSIG = 1
+            libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+        except Exception:
+            pass
+
+
+def load_user_config() -> dict[str, Any]:
+    """Loads optional user defaults from ~/.config/folio/folio.toml."""
+    xdg_config = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg_config) if xdg_config else Path.home() / ".config"
+    cfg_path = base / "folio" / "folio.toml"
+    if cfg_path.is_file():
+        try:
+            with cfg_path.open("rb") as f:
+                data = tomllib.load(f)
+            return data.get("general", data) if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
 
 USAGE = f"""{ui.badge()} {ui.bold("Markdown -> Typst PDF Document Compiler")}
 
@@ -62,7 +94,10 @@ def find_target_markdown(arg_path: str | None) -> Path:
         return md_files[0]
     elif len(md_files) > 1:
         if sys.stdin.isatty():
-            options = [(str(f), f"📄 {f.name}") for f in md_files]
+            options = [
+                (str(f), f"📄 {f.name}", f"{f.stat().st_size:,} bytes")
+                for f in md_files
+            ]
             chosen = ui.select(
                 "Multiple Markdown documents found. Select one to compile:", options
             )
@@ -137,73 +172,134 @@ def build_pdf(
 
     body_path = Path("_body.typ")
     entry_path = Path("_entry.typ")
+    preexec = _linux_set_pdeathsig if sys.platform.startswith("linux") else None
 
     try:
         if not quiet:
-            ui.action(f"Parsing '{md_path.name}' via Pandoc...", symbol="⚙️ ")
-
-        res_pandoc = subprocess.run(
-            [
-                "pandoc",
-                str(md_path),
-                "-f",
-                "markdown",
-                "-t",
-                "typst",
-                "-o",
-                str(body_path),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if res_pandoc.returncode != 0:
-            ui.error(f"Pandoc conversion failed:\n{res_pandoc.stderr.strip()}")
-            return False
-
-        body_content = body_path.read_text(encoding="utf-8")
-        body_path.write_text(
-            f'#import "{template_path.name}": *\n\n{body_content}', encoding="utf-8"
-        )
-
-        entry_path.write_text(
-            f'#import "{template_path.name}": *\n#show: doc => report(md-path: "{md_path.name}", doc)\n#include "{body_path.name}"\n',
-            encoding="utf-8",
-        )
-
-        run_env = os.environ.copy()
-        if not run_env.get("TYPST_ROOT"):
-            run_env.pop("TYPST_ROOT", None)
-
-        if not quiet:
-            ui.action(f"Compiling PDF: {out_pdf}...", symbol="⚙️ ")
-
-        compile_cmd = ["typst", "compile"]
-        compile_root = str(Path(root_path).resolve()) if root_path else "."
-        compile_cmd.extend(["--root", compile_root])
-        if font_path:
-            compile_cmd.extend(["--font-path", str(Path(font_path).resolve())])
-        compile_cmd.extend([str(entry_path), out_pdf])
-
-        res = subprocess.run(
-            compile_cmd,
-            env=run_env,
-            capture_output=True,
-            text=True,
-        )
-
-        if res.returncode == 0:
-            ui.success(f"Successfully compiled {out_pdf}")
-            if open_after:
-                open_cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
-                subprocess.Popen(
-                    [open_cmd, out_pdf],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+            with ui.spinner(f"Parsing '{ui.bold(md_path.name)}' via Pandoc...") as sp:
+                res_pandoc = subprocess.run(
+                    [
+                        "pandoc",
+                        str(md_path),
+                        "-f",
+                        "markdown",
+                        "-t",
+                        "typst",
+                        "-o",
+                        str(body_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    preexec_fn=preexec,
                 )
-            return True
+                if res_pandoc.returncode != 0:
+                    sp.stop("Pandoc conversion failed.", ok=False)
+                    ui.error_panel(
+                        "Pandoc Conversion Error", res_pandoc.stderr.strip()
+                    )
+                    return False
+
+                body_content = body_path.read_text(encoding="utf-8")
+                body_path.write_text(
+                    f'#import "{template_path.name}": *\n\n{body_content}',
+                    encoding="utf-8",
+                )
+
+                entry_path.write_text(
+                    f'#import "{template_path.name}": *\n#show: doc => report(md-path: "{md_path.name}", doc)\n#include "{body_path.name}"\n',
+                    encoding="utf-8",
+                )
+
+                run_env = os.environ.copy()
+                if not run_env.get("TYPST_ROOT"):
+                    run_env.pop("TYPST_ROOT", None)
+
+                sp.update(f"Compiling PDF: {ui.bold(out_pdf)}...")
+
+                compile_cmd = ["typst", "compile"]
+                compile_root = str(Path(root_path).resolve()) if root_path else "."
+                compile_cmd.extend(["--root", compile_root])
+                if font_path:
+                    compile_cmd.extend(["--font-path", str(Path(font_path).resolve())])
+                compile_cmd.extend([str(entry_path), out_pdf])
+
+                res = subprocess.run(
+                    compile_cmd,
+                    env=run_env,
+                    capture_output=True,
+                    text=True,
+                    preexec_fn=preexec,
+                )
+
+                if res.returncode == 0:
+                    sp.stop(f"Successfully compiled {ui.bold(out_pdf)}", ok=True)
+                else:
+                    sp.stop(f"Typst compilation failed for {out_pdf}.", ok=False)
+                    ui.error_panel("Typst Compilation Error", res.stderr.strip())
+                    return False
         else:
-            ui.error(f"Typst compilation failed:\n{res.stderr.strip()}")
-            return False
+            res_pandoc = subprocess.run(
+                [
+                    "pandoc",
+                    str(md_path),
+                    "-f",
+                    "markdown",
+                    "-t",
+                    "typst",
+                    "-o",
+                    str(body_path),
+                ],
+                capture_output=True,
+                text=True,
+                preexec_fn=preexec,
+            )
+            if res_pandoc.returncode != 0:
+                ui.error_panel("Pandoc Conversion Error", res_pandoc.stderr.strip())
+                return False
+
+            body_content = body_path.read_text(encoding="utf-8")
+            body_path.write_text(
+                f'#import "{template_path.name}": *\n\n{body_content}',
+                encoding="utf-8",
+            )
+
+            entry_path.write_text(
+                f'#import "{template_path.name}": *\n#show: doc => report(md-path: "{md_path.name}", doc)\n#include "{body_path.name}"\n',
+                encoding="utf-8",
+            )
+
+            run_env = os.environ.copy()
+            if not run_env.get("TYPST_ROOT"):
+                run_env.pop("TYPST_ROOT", None)
+
+            compile_cmd = ["typst", "compile"]
+            compile_root = str(Path(root_path).resolve()) if root_path else "."
+            compile_cmd.extend(["--root", compile_root])
+            if font_path:
+                compile_cmd.extend(["--font-path", str(Path(font_path).resolve())])
+            compile_cmd.extend([str(entry_path), out_pdf])
+
+            res = subprocess.run(
+                compile_cmd,
+                env=run_env,
+                capture_output=True,
+                text=True,
+                preexec_fn=preexec,
+            )
+            if res.returncode == 0:
+                ui.success(f"Successfully compiled {out_pdf}")
+            else:
+                ui.error_panel("Typst Compilation Error", res.stderr.strip())
+                return False
+
+        if open_after:
+            open_cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
+            subprocess.Popen(
+                [open_cmd, out_pdf],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        return True
 
     finally:
         for temp_file in [entry_path, body_path]:
@@ -331,6 +427,9 @@ def handle_color_args():
 
 
 def main():
+    user_cfg = load_user_config()
+    if "color" in user_cfg:
+        ui.set_color_mode(str(user_cfg["color"]))
     handle_color_args()
     args = sys.argv[1:]
 
@@ -339,7 +438,7 @@ def main():
         sys.exit(0)
 
     if any(a in ("-V", "-v", "--version", "version") for a in args):
-        print(f"{ui.badge()} {ui.bold('v0.1.0')}")
+        print(f"{ui.badge()} {ui.bold(f'v{__version__}')}")
         sys.exit(0)
 
     if not args:
@@ -382,11 +481,11 @@ def main():
 
     target_file = None
     output_filename = None
-    custom_template = None
-    root_path = None
-    font_path = None
+    custom_template = user_cfg.get("template")
+    root_path = user_cfg.get("root")
+    font_path = user_cfg.get("font_path")
     is_watch = False
-    open_after = False
+    open_after = bool(user_cfg.get("open", False))
 
     i = 0
     while i < len(rest_args):

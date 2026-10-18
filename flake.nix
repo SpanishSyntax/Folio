@@ -52,9 +52,15 @@
         folio = folioPackage;
       };
 
-      apps.default = {
-        type = "app";
-        program = "${folioPackage}/bin/folio";
+      apps = {
+        default = {
+          type = "app";
+          program = "${folioPackage}/bin/folio";
+        };
+        folio = {
+          type = "app";
+          program = "${folioPackage}/bin/folio";
+        };
       };
 
       devShells.default = pkgs.mkShell {
@@ -67,8 +73,15 @@
       };
     })
     // {
-      homeManagerModules = {
-        default = self.homeManagerModules.folio;
+      overlays = {
+        default = final: prev: {
+          folio = self.packages.${prev.stdenv.hostPlatform.system}.default;
+        };
+        folio = self.overlays.default;
+      };
+
+      nixosModules = {
+        default = self.nixosModules.folio;
         folio = {
           config,
           lib,
@@ -90,7 +103,46 @@
           };
 
           config = lib.mkIf cfg.enable {
+            environment.systemPackages = [cfg.package];
+          };
+        };
+      };
+
+      homeManagerModules = {
+        default = self.homeManagerModules.folio;
+        folio = {
+          config,
+          lib,
+          pkgs,
+          ...
+        }: let
+          cfg = config.programs.folio;
+          tomlFormat = pkgs.formats.toml {};
+          system = pkgs.stdenv.hostPlatform.system;
+          defaultFolio = self.packages.${system}.default;
+        in {
+          options.programs.folio = {
+            enable = lib.mkEnableOption "Folio - Markdown to Typst PDF Document Compiler";
+
+            package = lib.mkOption {
+              type = lib.types.package;
+              default = defaultFolio;
+              description = "The Folio package to use.";
+            };
+
+            settings = lib.mkOption {
+              type = tomlFormat.type;
+              default = {};
+              description = "Configuration written to ~/.config/folio/folio.toml.";
+            };
+          };
+
+          config = lib.mkIf cfg.enable {
             home.packages = [cfg.package];
+
+            xdg.configFile."folio/folio.toml" = lib.mkIf (cfg.settings != {}) {
+              source = tomlFormat.generate "folio.toml" cfg.settings;
+            };
           };
         };
       };
