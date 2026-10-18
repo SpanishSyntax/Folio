@@ -29,8 +29,3 @@ folio = "folio.cli:main"
 where = ["."]
 include = ["folio*"]
 
-[tool.setuptools.package-data]
-folio = [
-  "templates/*",
-  "templates/**/*",
-]

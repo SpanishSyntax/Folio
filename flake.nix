@@ -33,14 +33,13 @@
 
         postFixup = ''
           wrapProgram $out/bin/folio \
-            --prefix PATH : ${lib.makeBinPath [pkgs.pandoc pkgs.typst]} \
-            --set FOLIO_TEMPLATES "$out/${pkgs.python3.sitePackages}/folio/templates"
+            --prefix PATH : ${lib.makeBinPath [pkgs.pandoc pkgs.typst pkgs.tectonic]}
         '';
 
         doCheck = false;
 
         meta = with lib; {
-          description = "Markdown to Typst PDF Document Compiler";
+          description = "Markdown to Typst & LaTeX Multi-Mode Document Compiler";
           homepage = "https://github.com/SpanishSyntax/Folio";
           license = licenses.mit;
           mainProgram = "folio";
@@ -69,6 +68,7 @@
           python3Packages.setuptools
           pandoc
           typst
+          tectonic
         ];
       };
     })

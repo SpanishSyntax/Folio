@@ -1,45 +1,59 @@
 # Folio 📝❄️
 
-> **Hermetic Markdown to Typst PDF Document Compiler**
+> **Hermetic Multi-Mode Document & Presentation Compiler (Typst + LaTeX)**
 
-Folio is an opinionated, ultra-fast document compiler that turns standard GitHub Flavored Markdown (GFM) and LaTeX math into publication-grade, beautifully typeset PDF documents via Typst.
+Folio is an opinionated, ultra-fast document compiler that turns standard GitHub Flavored Markdown (GFM), Typst, and LaTeX into publication-grade PDFs, IEEE academic papers, and 16:9 presentation slide decks.
 
 ---
 
 ## ✨ Features
 
-- 🔒 **100% Self-Contained & Hermetic**: Zero host toolchain dependencies. Folio packages and wraps both `pandoc` and `typst` in its Nix closure, guaranteeing identical PDF output on any machine.
-- 🎨 **Modern Typographic Engine**: Out-of-the-box minimal sans-serif design system with Inter, automatic page headers/footers, dynamic margin layouts, callout blocks, and syntax highlighting.
-- 📑 **YAML Frontmatter Integration**: Extracts metadata (`title`, `author`, `dependency`, `date`) from standard Markdown YAML headers directly into document layout headers.
-- 👁️ **Live Watch Mode (`folio document.md -w`)**: Continuous background watcher that detects file saves and automatically re-compiles the PDF in milliseconds.
-- 📦 **Built-in Template Fallback**: Compiles any standalone `.md` file without requiring a local `template.typ`. If a local template is present, Folio seamlessly uses your custom layout.
-- 🚀 **Instant Scaffolding (`folio init`)**: Generates starter documents (`input.md`) and local `template.typ` files for full layout customization.
-- 🌐 **Universal Portability**: Run anywhere with zero installation using `nix run github:SpanishSyntax/Folio`.
+- 🔒 **100% Hermetic & Self-Contained**: Zero host toolchain dependencies. Folio packages `pandoc`, `typst`, and `tectonic` inside its Nix closure, guaranteeing identical PDF compilation on any machine.
+- 🎯 **Three Distinct Operating Modes**:
+  - 📄 **`report` (Default)**: Clean minimal sans-serif report layout with Inter, dynamic margins, headers, footers, and callouts (A4/Letter).
+  - 🖥️ **`slides` (16:9 Presentation)**: Ultra-crisp 16:9 widescreen presentation deck (1920×1080) with dark/light themes, slide counters, and slide breaks on `---` or headers.
+  - 📜 **`paper` (IEEE Academic Paper)**: Two-column camera-ready layout with IEEE Roman section numbering (`I.`, `II.`, `A.`), full-width title/abstract/keywords, and serif typography.
+- ⚡ **Multi-Format & Multi-Engine**:
+  - Compiles **Markdown** via Pandoc + Typst.
+  - Compiles native **`.typ`** files directly with Typst.
+  - Compiles native **`.tex`** files directly with Tectonic (zero auxiliary file clutter).
+- 📑 **YAML Frontmatter Integration**: Control title, authors, affiliations, operating mode (`mode: slides`), preset (`preset: ieee`), theme (`theme: dark`), and geometry directly in Markdown frontmatter.
+- 👁️ **Live Watch Mode (`folio <doc> -w`)**: Continuous background watcher that detects file saves and automatically re-compiles the PDF in milliseconds.
+- 🤝 **Flaker Integration**: Scaffolding is completely delegated to [Flaker](https://github.com/SpanishSyntax/Flaker) (`flaker init folio`, `flaker project folio`, `flaker new folio`), keeping Folio purely focused on compiling and watching.
 
 ---
 
 ## 🚀 Quick Start
 
-Run Folio directly with Nix:
-
+1. **Scaffold workspace using Flaker**:
 ```bash
-# Compile any markdown document to PDF
-nix run github:SpanishSyntax/Folio -- document.md
+# Initialize DevShell + templates (template.typ, slides.typ, ieee.typ) + starters
+flaker init folio
 
-# Auto-discover input.md or unique *.md in the current folder
-nix run github:SpanishSyntax/Folio
+# Or drop templates into an existing workspace
+flaker project folio
 
-# Continuous watch mode (recompiles on save)
-nix run github:SpanishSyntax/Folio -- document.md -w
+# Or drop starter leaf documents
+flaker new folio
+```
 
-# Specify custom PDF output name
-nix run github:SpanishSyntax/Folio -- document.md -o output.pdf
+2. **Compile with Folio**:
+```bash
+# Auto-discover input.md, slides.md, or paper.md in current directory
+folio
 
-# Open in system PDF viewer after compiling
-nix run github:SpanishSyntax/Folio -- document.md --open
+# Compile a report
+folio input.md
 
-# Scaffold starter document and local template.typ
-nix run github:SpanishSyntax/Folio -- init my_report
+# Compile 16:9 presentation slides with live watch mode
+folio slides.md -m slides -w
+
+# Compile an IEEE 2-column academic paper
+folio paper.md -m paper
+
+# Directly compile native Typst or LaTeX documents
+folio main.typ -w
+folio main.tex -w
 ```
 
 ---
@@ -48,14 +62,22 @@ nix run github:SpanishSyntax/Folio -- init my_report
 
 ```text
 Usage:
-  folio [file.md] [options]          Build PDF from Markdown
-  folio build [file.md] [options]    Explicit build command
-  folio init [name] [options]        Scaffold starter template.typ and markdown file
+  folio [file] [options]             Build PDF from Markdown, Typst, or LaTeX
+  folio build [file] [options]       Explicit build command
+  folio init [name] [options]        Scaffold starter document and template
+
+Operating Modes:
+  -m, --mode MODE        Document operating mode:
+                         • report: Minimal sans-serif document (default, A4/Letter)
+                         • slides: 16:9 widescreen presentation (1920x1080)
+                         • paper:  Academic paper (IEEE 2-column layout)
+  -p, --preset PRESET    Layout preset (e.g., 'ieee', 'default')
 
 Options:
   -o, --output PATH      Specify output PDF filename
   -t, --template PATH    Use custom Typst template file
   -w, --watch            Watch mode: recompile automatically on file changes
+  --engine ENGINE        Compiler engine: 'typst' (default) or 'tectonic'
   --root PATH            Typst compilation root directory (default: current directory)
   --font-path PATH       Additional directory containing fonts for Typst
   --open                 Open generated PDF in system viewer after build
@@ -68,29 +90,68 @@ Options:
 
 ---
 
-## 📄 Markdown & Frontmatter Format
+## 📄 Frontmatter Formats
 
-Folio uses standard GitHub Flavored Markdown with YAML frontmatter:
+Folio dynamically configures layout and styling from standard Markdown YAML frontmatter:
 
+### 1. Presentation Slides (16:9 / 1920×1080)
+```markdown
+---
+title: "Distributed Swarm Intelligence"
+subtitle: "Real-time Consensus in GPS-Denied Environments"
+author: "Juan José Martínez Guerrero"
+dependency: "TUDelft Systems & Control"
+date: "October 2026"
+mode: "slides"
+theme: "dark"          # 'dark' or 'light'
+aspect-ratio: "16-9"
+---
+
+# Problem Formulation
+- Sensor limitations: $O(t^2)$ drift
+- Intermittent peer-to-peer wireless links
+
+---
+
+# Mathematical Formulation
+Each agent minimizes relative pose error:
+$$
+\min_{\mathbf{x}_i} \sum_{j \in \mathcal{N}_i} \|\mathbf{x}_i - \mathbf{x}_j - \mathbf{d}_{ij}\|^2
+$$
+```
+
+### 2. Academic Paper (IEEE 2-Column)
+```markdown
+---
+title: "Resilient Distributed State Estimation for Autonomous Swarms"
+author: "Juan José Martínez Guerrero, Member, IEEE, and Alex Rivera"
+dependency: "Department of Systems and Control, Delft University of Technology"
+email: "j.j.martinezguerrero@tudelft.nl"
+abstract: "Autonomous micro-aerial vehicle swarms face rapid dead-reckoning drift..."
+keywords: "Swarm robotics, distributed factor graphs, ADMM."
+mode: "paper"
+preset: "ieee"
+---
+
+# Introduction
+Autonomous multi-agent systems require distributed awareness...
+
+# System Architecture
+Consider an undirected communication graph $\mathcal{G} = (\mathcal{V}, \mathcal{E})$...
+```
+
+### 3. Report Document (Default)
 ```markdown
 ---
 title: "Autonomous Space Exploration Systems"
 author: "Juan José Martínez Guerrero"
 dependency: "TUDelft Systems & Control"
 date: "25/09/2026"
+mode: "report"
 ---
 
 # Introduction
-
-Folio compiles standard Markdown directly into Typst.
-
-- Standard GFM lists and checklists
-- Math equations: $E = m c^2$
-- Raw Typst blocks when you need special formatting:
-
-```{=typst}
-#lorem(30)
-```
+Minimal Inter typography with automatic headers, footers, and page counters.
 ```
 
 ---
@@ -122,26 +183,21 @@ Add Folio to your `flake.nix`:
 }
 ```
 
-Once enabled, `folio` is directly accessible in your interactive shell with all wrapped binaries.
-
 ---
 
 ## 📁 Repository Structure
 
 ```text
 Folio/
-├── flake.nix               # Flake package & Home Manager module definition
-├── pyproject.toml          # Standard PEP 517 / 621 Python project packaging
-├── MANIFEST.in             # Asset bundling manifest
+├── flake.nix               # Flake packaging wrapping pandoc, typst, and tectonic
+├── pyproject.toml          # PEP 517 / 621 Python packaging
 ├── LICENSE                 # MIT License
 ├── README.md               # Documentation & usage guide
 └── folio/
     ├── __init__.py         # Package metadata
     ├── __main__.py         # python -m folio entrypoint
-    ├── cli.py              # CLI core logic, compiler pipeline & watch daemon
-    └── templates/          # Default Typst document styling & starter assets
-        ├── template.typ    # Turnkey minimal sans-serif Typst design system
-        └── input.md        # Starter document with frontmatter examples
+    ├── cli.py              # Multi-mode compiler pipeline & watch daemon
+    └── ui.py               # Interactive CLI styling, spinners & menus
 ```
 
 ---

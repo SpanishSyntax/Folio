@@ -38,47 +38,81 @@ def load_user_config() -> dict[str, Any]:
     return {}
 
 
-USAGE = f"""{ui.badge()} {ui.bold("Markdown -> Typst PDF Document Compiler")}
+USAGE = f"""{ui.badge()} {ui.bold("Polyglot Document & Presentation Compiler (Typst + LaTeX)")}
 
 {ui.blue("Usage:")}
-  folio [file.md] [options]          Build PDF from Markdown
-  folio build [file.md] [options]    Explicit build command
-  folio init [name] [options]        Scaffold starter template.typ and markdown file
+  folio [file] [options]             Build PDF from Markdown, Typst, or LaTeX
+  folio build [file] [options]       Explicit build command
+
+{ui.blue("Operating Modes:")}
+  -m, --mode MODE        Document operating mode:
+                         • {ui.bold("report")}: Minimal sans-serif document (default, A4/Letter)
+                         • {ui.bold("slides")}: 16:9 widescreen presentation (1920x1080)
+                         • {ui.bold("paper")}:  Academic paper (IEEE 2-column layout)
+  -p, --preset PRESET    Layout preset (e.g., 'ieee', 'default')
 
 {ui.blue("Options:")}
   -o, --output PATH      Specify output PDF filename
   -t, --template PATH    Use custom Typst template file
   -w, --watch            Watch mode: recompile automatically on file changes
+  --engine ENGINE        Compiler engine: 'typst' (default) or 'tectonic'
   --root PATH            Typst compilation root directory (default: current directory)
   --font-path PATH       Additional directory containing fonts for Typst
   --open                 Open generated PDF in system viewer after build
-  -f, --force            Overwrite existing files during init without prompting
   --color MODE           Color output mode: auto, always, never (default: auto)
   --no-color             Disable colored output
   -h, --help             Show this help message and exit
   -V, -v, --version      Show version information and exit
 
+{ui.blue("Scaffolding Note:")}
+  Workspace scaffolding and templates are managed by {ui.bold("flaker")}:
+  • flaker init folio     # Bootstrap DevShell + template.typ, slides.typ, ieee.typ
+  • flaker project folio  # Drop template foundations into current workspace
+  • flaker new folio      # Drop starter documents (input.md, slides.md, paper.md)
+
 {ui.blue("Examples:")}
-  folio                              # Auto-discover input.md or unique *.md
-  folio report.md                    # Compile report.md -> report.pdf
-  folio report.md -o final.pdf       # Custom output destination
-  folio report.md -w                 # Live recompile on save (watch mode)
-  folio report.md --root ..          # Pass compilation root directory to Typst
-  folio init my_paper                # Scaffold template.typ and my_paper.md
+  folio                              # Auto-discover target document in workspace
+  folio report.md                    # Compile report.md -> report.pdf (using template.typ)
+  folio deck.md -m slides -w         # Live watch 16:9 presentation (using slides.typ)
+  folio paper.md -m paper            # Compile IEEE 2-column paper (using ieee.typ)
+  folio main.typ -w                  # Direct Typst compilation with live reload
+  folio main.tex                     # Direct LaTeX compilation via Tectonic
 """
 
 
-def get_bundled_assets_dir() -> Path:
-    """Finds the bundled templates directory."""
-    env_dir = os.environ.get("FOLIO_TEMPLATES")
-    if env_dir and Path(env_dir).exists():
-        return Path(env_dir)
-    pkg_dir = Path(__file__).resolve().parent / "templates"
-    return pkg_dir
+def parse_frontmatter(file_path: Path) -> dict[str, str]:
+    """Extracts simple key-value YAML frontmatter from a Markdown file."""
+    fm: dict[str, str] = {}
+    try:
+        content = file_path.read_text(encoding="utf-8")
+        if content.startswith("---"):
+            end_idx = content.find("\n---", 3)
+            if end_idx != -1:
+                yaml_block = content[3:end_idx]
+                for line in yaml_block.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and ":" in line:
+                        k, v = line.split(":", 1)
+                        fm[k.strip().lower().replace("-", "_")] = v.strip().strip("\"'")
+    except Exception:
+        pass
+    return fm
 
 
-def find_target_markdown(arg_path: str | None) -> Path:
-    """Discovers target Markdown document."""
+def normalize_mode(mode_val: str | None, preset_val: str | None = None) -> str:
+    """Normalizes mode aliases to canonical modes: 'report', 'slides', or 'paper'."""
+    val = (mode_val or "").strip().lower()
+    preset = (preset_val or "").strip().lower()
+
+    if preset == "ieee" or val in ("paper", "ieee", "article"):
+        return "paper"
+    if val in ("slides", "presentation", "slide", "deck", "ppt"):
+        return "slides"
+    return "report"
+
+
+def find_target_file(arg_path: str | None) -> Path:
+    """Discovers target document (.md, .typ, .tex)."""
     if arg_path:
         target = Path(arg_path)
         if not target.exists():
@@ -86,101 +120,255 @@ def find_target_markdown(arg_path: str | None) -> Path:
             sys.exit(1)
         return target
 
-    if Path("input.md").exists():
-        return Path("input.md")
+    for candidate in ("input.md", "slides.md", "paper.md", "main.typ", "main.tex"):
+        if Path(candidate).exists():
+            return Path(candidate)
 
-    md_files = sorted(list(Path(".").glob("*.md")))
-    if len(md_files) == 1:
-        return md_files[0]
-    elif len(md_files) > 1:
+    doc_files = (
+        sorted(list(Path(".").glob("*.md")))
+        + sorted(list(Path(".").glob("*.typ")))
+        + sorted(list(Path(".").glob("*.tex")))
+    )
+
+    doc_files = [f for f in doc_files if not f.name.startswith(("_body", "_entry", "_folio"))]
+
+    if len(doc_files) == 1:
+        return doc_files[0]
+    elif len(doc_files) > 1:
         if sys.stdin.isatty():
-            options = [
-                (str(f), f"📄 {f.name}", f"{f.stat().st_size:,} bytes")
-                for f in md_files
-            ]
-            chosen = ui.select(
-                "Multiple Markdown documents found. Select one to compile:", options
-            )
+            options = []
+            for f in doc_files:
+                if f.suffix == ".md":
+                    icon = "📄"
+                elif f.suffix == ".typ":
+                    icon = "❄️"
+                else:
+                    icon = "📜"
+                options.append((str(f), f"{icon} {f.name}", f"{f.stat().st_size:,} bytes"))
+            chosen = ui.select("Multiple documents found. Select one to compile:", options)
             return Path(chosen)
-        names = ", ".join(f.name for f in md_files)
-        ui.error(
-            f"Multiple Markdown files found ({names}). Specify one: folio <file.md>"
-        )
+        names = ", ".join(f.name for f in doc_files)
+        ui.error(f"Multiple documents found ({names}). Specify one: folio <file>")
         sys.exit(1)
 
-    if sys.stdin.isatty():
-        action = ui.select(
-            "No Markdown document found. What would you like to do?",
-            [
-                ("init", "Scaffold starter template.typ and input.md (folio init)"),
-                ("exit", "Exit"),
-            ],
-        )
-        if action == "init":
-            init_workspace()
-            return Path("input.md")
-        sys.exit(0)
-
-    ui.error("No Markdown file found. Run 'folio init' to scaffold a document.")
+    ui.error(
+        "No document found. Scaffold one with 'flaker init folio' or 'flaker new folio'."
+    )
     sys.exit(1)
 
 
-def resolve_template(custom_template: str | None) -> tuple[Path, bool]:
+def resolve_typst_template(
+    mode: str, custom_template: str | None
+) -> tuple[Path, str]:
     """
-    Resolves the Typst template.
-    Returns (template_path, is_temporary).
+    Resolves the local Typst template and entry function name for the given mode.
+    Returns (template_path, entry_func_name).
     """
+    mode = normalize_mode(mode)
+    entry_funcs = {
+        "report": "report",
+        "slides": "slides",
+        "paper": "paper",
+    }
+    entry_func = entry_funcs[mode]
+
     if custom_template:
         t_path = Path(custom_template)
         if not t_path.exists():
             ui.error(f"Custom template '{custom_template}' not found.")
             sys.exit(1)
-        return t_path, False
+        return t_path, entry_func
 
-    local_template = Path("template.typ")
-    if local_template.exists():
-        return local_template, False
+    # Look for local template in workspace
+    local_candidates = {
+        "report": ["template.typ", "report.typ"],
+        "slides": ["slides.typ", "presentation.typ", "template.typ"],
+        "paper": ["ieee.typ", "paper.typ", "template.typ"],
+    }
 
-    bundled = get_bundled_assets_dir() / "template.typ"
-    if bundled.exists():
-        temp_tpl = Path("_folio_template.typ")
-        temp_tpl.write_text(bundled.read_text(encoding="utf-8"), encoding="utf-8")
-        return temp_tpl, True
+    expected_name = {
+        "report": "template.typ",
+        "slides": "slides.typ",
+        "paper": "ieee.typ",
+    }[mode]
 
-    ui.error("template.typ not found. Run 'folio init' to scaffold a template.")
+    for cand in local_candidates[mode]:
+        cand_path = Path(cand)
+        if cand_path.exists():
+            return cand_path, entry_func
+
+    ui.error(
+        f"Template '{expected_name}' not found in workspace.\n"
+        f"  Run '{ui.bold('flaker project folio')}' to scaffold templates, or specify --template <path>."
+    )
     sys.exit(1)
+
+
+def compile_tectonic(
+    tex_path: Path,
+    out_pdf: str,
+    quiet: bool = False,
+    preexec: Any = None,
+) -> bool:
+    """Compiles LaTeX document using Tectonic."""
+    out_path = Path(out_pdf).resolve()
+    out_dir = out_path.parent
+    expected_out = out_dir / f"{tex_path.stem}.pdf"
+
+    compile_cmd = ["tectonic", str(tex_path), "-o", str(out_dir)]
+
+    if not quiet:
+        with ui.spinner(f"Compiling LaTeX via Tectonic: {ui.bold(out_pdf)}...") as sp:
+            res = subprocess.run(
+                compile_cmd,
+                capture_output=True,
+                text=True,
+                preexec_fn=preexec,
+            )
+            if res.returncode == 0:
+                if expected_out != out_path and expected_out.exists():
+                    expected_out.replace(out_path)
+                sp.stop(f"Successfully compiled {ui.bold(out_pdf)}", ok=True)
+                return True
+            else:
+                sp.stop(f"Tectonic compilation failed for {out_pdf}.", ok=False)
+                ui.error_panel("Tectonic Compilation Error", res.stderr.strip() or res.stdout.strip())
+                return False
+    else:
+        res = subprocess.run(
+            compile_cmd,
+            capture_output=True,
+            text=True,
+            preexec_fn=preexec,
+        )
+        if res.returncode == 0:
+            if expected_out != out_path and expected_out.exists():
+                expected_out.replace(out_path)
+            ui.success(f"Successfully compiled {out_pdf}")
+            return True
+        else:
+            ui.error_panel("Tectonic Compilation Error", res.stderr.strip() or res.stdout.strip())
+            return False
+
+
+def compile_typst_direct(
+    typ_path: Path,
+    out_pdf: str,
+    root_path: str | None = None,
+    font_path: str | None = None,
+    quiet: bool = False,
+    preexec: Any = None,
+) -> bool:
+    """Directly compiles a Typst document."""
+    compile_cmd = ["typst", "compile"]
+    compile_root = str(Path(root_path).resolve()) if root_path else "."
+    compile_cmd.extend(["--root", compile_root])
+    if font_path:
+        compile_cmd.extend(["--font-path", str(Path(font_path).resolve())])
+    compile_cmd.extend([str(typ_path), out_pdf])
+
+    run_env = os.environ.copy()
+
+    if not quiet:
+        with ui.spinner(f"Compiling Typst PDF: {ui.bold(out_pdf)}...") as sp:
+            res = subprocess.run(
+                compile_cmd,
+                env=run_env,
+                capture_output=True,
+                text=True,
+                preexec_fn=preexec,
+            )
+            if res.returncode == 0:
+                sp.stop(f"Successfully compiled {ui.bold(out_pdf)}", ok=True)
+                return True
+            else:
+                sp.stop(f"Typst compilation failed for {out_pdf}.", ok=False)
+                ui.error_panel("Typst Compilation Error", res.stderr.strip())
+                return False
+    else:
+        res = subprocess.run(
+            compile_cmd,
+            env=run_env,
+            capture_output=True,
+            text=True,
+            preexec_fn=preexec,
+        )
+        if res.returncode == 0:
+            ui.success(f"Successfully compiled {out_pdf}")
+            return True
+        else:
+            ui.error_panel("Typst Compilation Error", res.stderr.strip())
+            return False
 
 
 def build_pdf(
     target_file: str | None = None,
     output_filename: str | None = None,
+    mode: str | None = None,
+    preset: str | None = None,
     custom_template: str | None = None,
+    engine: str | None = None,
     root_path: str | None = None,
     font_path: str | None = None,
     open_after: bool = False,
     quiet: bool = False,
 ) -> bool:
-    """Compiles Markdown document into Typst and produces a PDF."""
-    md_path = find_target_markdown(target_file)
+    """Compiles document (Markdown, Typst, or LaTeX) into PDF."""
+    target_path = find_target_file(target_file)
+    preexec = _linux_set_pdeathsig if sys.platform.startswith("linux") else None
 
     if output_filename:
         out_pdf = output_filename
     else:
-        out_pdf = f"{md_path.stem.replace('-', '_').replace(' ', '_').lower()}.pdf"
+        out_pdf = f"{target_path.stem.replace('-', '_').replace(' ', '_').lower()}.pdf"
 
-    template_path, is_temp_template = resolve_template(custom_template)
+    # Direct LaTeX handling
+    if target_path.suffix == ".tex" or engine == "tectonic":
+        success = compile_tectonic(target_path, out_pdf, quiet=quiet, preexec=preexec)
+        if success and open_after:
+            open_cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
+            subprocess.Popen([open_cmd, out_pdf], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return success
+
+    # Direct Typst handling
+    if target_path.suffix == ".typ":
+        success = compile_typst_direct(
+            target_path,
+            out_pdf,
+            root_path=root_path,
+            font_path=font_path,
+            quiet=quiet,
+            preexec=preexec,
+        )
+        if success and open_after:
+            open_cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
+            subprocess.Popen([open_cmd, out_pdf], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return success
+
+    # Markdown -> Typst pipeline
+    fm = parse_frontmatter(target_path)
+    effective_mode = normalize_mode(mode or fm.get("mode"), preset or fm.get("preset"))
+    template_path, entry_func = resolve_typst_template(
+        effective_mode, custom_template or fm.get("template")
+    )
+
+    compile_root = Path(root_path).resolve() if root_path else Path(".").resolve()
+    try:
+        rel_md_path = os.path.relpath(target_path.resolve(), compile_root)
+    except ValueError:
+        rel_md_path = str(target_path)
 
     body_path = Path("_body.typ")
     entry_path = Path("_entry.typ")
-    preexec = _linux_set_pdeathsig if sys.platform.startswith("linux") else None
 
     try:
         if not quiet:
-            with ui.spinner(f"Parsing '{ui.bold(md_path.name)}' via Pandoc...") as sp:
+            spinner_msg = f"Parsing '{ui.bold(target_path.name)}' ({ui.bold_cyan(effective_mode)}) via Pandoc..."
+            with ui.spinner(spinner_msg) as sp:
                 res_pandoc = subprocess.run(
                     [
                         "pandoc",
-                        str(md_path),
+                        str(target_path),
                         "-f",
                         "markdown",
                         "-t",
@@ -194,9 +382,7 @@ def build_pdf(
                 )
                 if res_pandoc.returncode != 0:
                     sp.stop("Pandoc conversion failed.", ok=False)
-                    ui.error_panel(
-                        "Pandoc Conversion Error", res_pandoc.stderr.strip()
-                    )
+                    ui.error_panel("Pandoc Conversion Error", res_pandoc.stderr.strip())
                     return False
 
                 body_content = body_path.read_text(encoding="utf-8")
@@ -206,26 +392,19 @@ def build_pdf(
                 )
 
                 entry_path.write_text(
-                    f'#import "{template_path.name}": *\n#show: doc => report(md-path: "{md_path.name}", doc)\n#include "{body_path.name}"\n',
+                    f'#import "{template_path.name}": *\n#show: doc => {entry_func}(md-path: "{rel_md_path}", doc)\n#include "{body_path.name}"\n',
                     encoding="utf-8",
                 )
 
-                run_env = os.environ.copy()
-                if not run_env.get("TYPST_ROOT"):
-                    run_env.pop("TYPST_ROOT", None)
+                sp.update(f"Compiling PDF: {ui.bold(out_pdf)} ({effective_mode})...")
 
-                sp.update(f"Compiling PDF: {ui.bold(out_pdf)}...")
-
-                compile_cmd = ["typst", "compile"]
-                compile_root = str(Path(root_path).resolve()) if root_path else "."
-                compile_cmd.extend(["--root", compile_root])
+                compile_cmd = ["typst", "compile", "--root", str(compile_root)]
                 if font_path:
                     compile_cmd.extend(["--font-path", str(Path(font_path).resolve())])
                 compile_cmd.extend([str(entry_path), out_pdf])
 
                 res = subprocess.run(
                     compile_cmd,
-                    env=run_env,
                     capture_output=True,
                     text=True,
                     preexec_fn=preexec,
@@ -241,7 +420,7 @@ def build_pdf(
             res_pandoc = subprocess.run(
                 [
                     "pandoc",
-                    str(md_path),
+                    str(target_path),
                     "-f",
                     "markdown",
                     "-t",
@@ -264,24 +443,17 @@ def build_pdf(
             )
 
             entry_path.write_text(
-                f'#import "{template_path.name}": *\n#show: doc => report(md-path: "{md_path.name}", doc)\n#include "{body_path.name}"\n',
+                f'#import "{template_path.name}": *\n#show: doc => {entry_func}(md-path: "{rel_md_path}", doc)\n#include "{body_path.name}"\n',
                 encoding="utf-8",
             )
 
-            run_env = os.environ.copy()
-            if not run_env.get("TYPST_ROOT"):
-                run_env.pop("TYPST_ROOT", None)
-
-            compile_cmd = ["typst", "compile"]
-            compile_root = str(Path(root_path).resolve()) if root_path else "."
-            compile_cmd.extend(["--root", compile_root])
+            compile_cmd = ["typst", "compile", "--root", str(compile_root)]
             if font_path:
                 compile_cmd.extend(["--font-path", str(Path(font_path).resolve())])
             compile_cmd.extend([str(entry_path), out_pdf])
 
             res = subprocess.run(
                 compile_cmd,
-                env=run_env,
                 capture_output=True,
                 text=True,
                 preexec_fn=preexec,
@@ -294,11 +466,7 @@ def build_pdf(
 
         if open_after:
             open_cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
-            subprocess.Popen(
-                [open_cmd, out_pdf],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            subprocess.Popen([open_cmd, out_pdf], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
 
     finally:
@@ -308,40 +476,42 @@ def build_pdf(
                     temp_file.unlink()
                 except OSError:
                     pass
-        if is_temp_template and template_path.exists():
-            try:
-                template_path.unlink()
-            except OSError:
-                pass
 
 
 def watch_pdf(
     target_file: str | None = None,
     output_filename: str | None = None,
+    mode: str | None = None,
+    preset: str | None = None,
     custom_template: str | None = None,
+    engine: str | None = None,
     root_path: str | None = None,
     font_path: str | None = None,
     open_after: bool = False,
 ):
-    """Watches markdown file and template for changes, recompiling automatically."""
-    md_path = find_target_markdown(target_file)
-    ui.info(f"Watching '{md_path.name}' for changes (Ctrl+C to stop)...", symbol="👁️ ")
+    """Watches document and template files for changes, recompiling automatically."""
+    target_path = find_target_file(target_file)
+    ui.info(f"Watching '{target_path.name}' for changes (Ctrl+C to stop)...", symbol="👁️ ")
 
     # Initial build
     build_pdf(
-        target_file=str(md_path),
+        target_file=str(target_path),
         output_filename=output_filename,
+        mode=mode,
+        preset=preset,
         custom_template=custom_template,
+        engine=engine,
         root_path=root_path,
         font_path=font_path,
         open_after=open_after,
     )
 
-    watched_files = [md_path]
+    watched_files = [target_path]
     if custom_template and Path(custom_template).exists():
         watched_files.append(Path(custom_template))
-    elif Path("template.typ").exists():
-        watched_files.append(Path("template.typ"))
+    for tpl_name in ("template.typ", "slides.typ", "ieee.typ"):
+        if Path(tpl_name).exists():
+            watched_files.append(Path(tpl_name))
 
     mtimes = {f: f.stat().st_mtime for f in watched_files if f.exists()}
 
@@ -360,9 +530,12 @@ def watch_pdf(
                 timestamp = time.strftime("%H:%M:%S")
                 ui.action(f"[{timestamp}] Change detected, rebuilding...", symbol="🔄")
                 build_pdf(
-                    target_file=str(md_path),
+                    target_file=str(target_path),
                     output_filename=output_filename,
+                    mode=mode,
+                    preset=preset,
                     custom_template=custom_template,
+                    engine=engine,
                     root_path=root_path,
                     font_path=font_path,
                     open_after=False,
@@ -371,49 +544,6 @@ def watch_pdf(
     except KeyboardInterrupt:
         print()
         ui.info("Watch mode stopped.", symbol="🛑")
-
-
-def init_workspace(name: str | None = None, force: bool = False):
-    """Scaffolds template.typ and an input markdown document."""
-    bundled_dir = get_bundled_assets_dir()
-    template_src = bundled_dir / "template.typ"
-    input_src = bundled_dir / "input.md"
-
-    doc_name = f"{name}.md" if name else "input.md"
-    dest_doc = Path(doc_name)
-    dest_template = Path("template.typ")
-
-    for dest, src in [(dest_template, template_src), (dest_doc, input_src)]:
-        if dest.exists() and not force:
-            if sys.stdin.isatty():
-                ans = ui.select(
-                    f"{dest.name} already exists. Overwrite?",
-                    [
-                        ("no", f"Keep existing {dest.name}"),
-                        ("yes", f"Overwrite {dest.name}"),
-                    ],
-                )
-                if ans != "yes":
-                    ui.warn(f"Skipped {dest.name}")
-                    continue
-            else:
-                ui.error(f"{dest.name} already exists. Pass --force to overwrite.")
-                sys.exit(1)
-
-        if src.exists():
-            content = src.read_text(encoding="utf-8")
-            if name and dest == dest_doc:
-                content = content.replace(
-                    "Document Title", name.replace("_", " ").title()
-                )
-            dest.write_text(content, encoding="utf-8")
-            ui.success(f"Scaffolded {dest.name}")
-        else:
-            ui.error(f"Source asset {src} not found.")
-
-    ui.info(
-        f"Ready! Run 'folio {doc_name}' or 'folio {doc_name} -w' to build.", symbol="🚀"
-    )
 
 
 def handle_color_args():
@@ -441,47 +571,27 @@ def main():
         print(f"{ui.badge()} {ui.bold(f'v{__version__}')}")
         sys.exit(0)
 
-    if not args:
-        if not Path("input.md").exists() and not list(Path(".").glob("*.md")):
-            if sys.stdin.isatty():
-                action = ui.select(
-                    "No Markdown document found in current directory. What would you like to do?",
-                    [
-                        (
-                            "init",
-                            "Scaffold starter template.typ and input.md (folio init)",
-                        ),
-                        ("help", "Show help and command usage"),
-                        ("exit", "Exit"),
-                    ],
-                )
-                if action == "init":
-                    init_workspace()
-                    sys.exit(0)
-                elif action == "help":
-                    print(USAGE)
-                    sys.exit(0)
-                else:
-                    sys.exit(0)
-            else:
-                print(USAGE)
-                sys.exit(0)
-
     cmd = args[0] if args else ""
     rest = args[1:] if args else []
 
     if cmd == "init":
-        force = "-f" in rest or "--force" in rest
-        filtered = [a for a in rest if a not in ("-f", "--force")]
-        name = filtered[0] if filtered else None
-        init_workspace(name, force=force)
+        ui.info(
+            "Scaffolding is handled by Flaker. Run:\n"
+            f"  • {ui.bold('flaker init folio')}     # Bootstrap DevShell + template.typ, slides.typ, ieee.typ\n"
+            f"  • {ui.bold('flaker project folio')}  # Scaffold template files into current directory\n"
+            f"  • {ui.bold('flaker new folio')}      # Drop starter documents (input.md, slides.md, paper.md)",
+            symbol="❄️ ",
+        )
         sys.exit(0)
 
     rest_args = rest if cmd == "build" else args
 
     target_file = None
     output_filename = None
+    mode = None
+    preset = None
     custom_template = user_cfg.get("template")
+    engine = user_cfg.get("engine")
     root_path = user_cfg.get("root")
     font_path = user_cfg.get("font_path")
     is_watch = False
@@ -494,6 +604,24 @@ def main():
             is_watch = True
         elif a == "--open":
             open_after = True
+        elif a in ("-m", "--mode"):
+            if i + 1 < len(rest_args):
+                mode = rest_args[i + 1]
+                i += 1
+        elif a.startswith("--mode="):
+            mode = a.split("=", 1)[1]
+        elif a in ("-p", "--preset"):
+            if i + 1 < len(rest_args):
+                preset = rest_args[i + 1]
+                i += 1
+        elif a.startswith("--preset="):
+            preset = a.split("=", 1)[1]
+        elif a == "--engine":
+            if i + 1 < len(rest_args):
+                engine = rest_args[i + 1]
+                i += 1
+        elif a.startswith("--engine="):
+            engine = a.split("=", 1)[1]
         elif a in ("-o", "--output"):
             if i + 1 < len(rest_args):
                 output_filename = rest_args[i + 1]
@@ -533,7 +661,10 @@ def main():
         watch_pdf(
             target_file=target_file,
             output_filename=output_filename,
+            mode=mode,
+            preset=preset,
             custom_template=custom_template,
+            engine=engine,
             root_path=root_path,
             font_path=font_path,
             open_after=open_after,
@@ -542,7 +673,10 @@ def main():
         success = build_pdf(
             target_file=target_file,
             output_filename=output_filename,
+            mode=mode,
+            preset=preset,
             custom_template=custom_template,
+            engine=engine,
             root_path=root_path,
             font_path=font_path,
             open_after=open_after,
