@@ -479,10 +479,21 @@ def build_pdf(
                 else ""
             )
 
+            if effective_mode == "report":
+                layout_customization = (
+                    "\\usepackage[a4paper, top=2.0cm, bottom=2.0cm, left=2.5cm, right=2.5cm]{geometry}\n"
+                    "\\makeatletter\n"
+                    "\\patchcmd{\\@makechapterhead}{\\vspace*{50\\p@}}{\\vspace*{0pt}}{}{}\n"
+                    "\\patchcmd{\\@makeschapterhead}{\\vspace*{50\\p@}}{\\vspace*{0pt}}{}{}\n"
+                    "\\makeatother\n"
+                )
+            else:
+                layout_customization = ""
+
             if effective_mode == "slides":
                 entry_content = f"{doc_class}\n{pkg_input}{pandoc_compat}\\usetheme{{default}}\n{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\begin{{frame}}[plain]\n\\titlepage\n\\end{{frame}}\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
             else:
-                entry_content = f"{doc_class}\n{pkg_input}{pandoc_compat}{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\maketitle\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
+                entry_content = f"{doc_class}\n{pkg_input}{pandoc_compat}{layout_customization}{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\maketitle\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
 
             entry_path.write_text(entry_content, encoding="utf-8")
             success = compile_tectonic(entry_path, out_pdf, quiet=quiet, preexec=preexec)
