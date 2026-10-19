@@ -389,11 +389,12 @@ def build_pdf(
     if effective_engine in ("latex", "tectonic", "tex"):
         body_path = compile_root / "_body.tex"
         entry_path = compile_root / "_entry.tex"
+        latex_target_fmt = "beamer" if effective_mode == "slides" else "latex"
         try:
             if not quiet:
                 with ui.spinner(f"Parsing '{ui.bold(target_path.name)}' ({ui.bold_cyan(effective_mode)}) via Pandoc (LaTeX)...") as sp:
                     res_p = subprocess.run(
-                        ["pandoc", str(target_path), "-f", "markdown", "-t", "latex", "-o", str(body_path)],
+                        ["pandoc", str(target_path), "-f", "markdown", "-t", latex_target_fmt, "-o", str(body_path)],
                         capture_output=True,
                         text=True,
                         preexec_fn=preexec,
@@ -404,7 +405,7 @@ def build_pdf(
                         return False
             else:
                 res_p = subprocess.run(
-                    ["pandoc", str(target_path), "-f", "markdown", "-t", "latex", "-o", str(body_path)],
+                    ["pandoc", str(target_path), "-f", "markdown", "-t", latex_target_fmt, "-o", str(body_path)],
                     capture_output=True,
                     text=True,
                     preexec_fn=preexec,
@@ -426,16 +427,62 @@ def build_pdf(
             title_cmd = f"\\title{{{title_val}}}\n" if title_val else ""
             author_cmd = f"\\author{{{author_val}}}\n" if author_val else ""
             date_cmd = f"\\date{{{date_val}}}\n" if date_val else ""
+            pandoc_compat = (
+                "\\usepackage{longtable}\n"
+                "\\usepackage{fancyvrb}\n"
+                "\\providecommand{\\tightlist}{%\n"
+                "  \\setlength{\\itemsep}{0pt}\\setlength{\\parskip}{0pt}}\n"
+                "\\ifdefined\\sout\n"
+                "  \\providecommand{\\st}[1]{\\sout{#1}}\n"
+                "\\else\n"
+                "  \\providecommand{\\st}[1]{#1}\n"
+                "\\fi\n"
+                "\\newcommand{\\VerbBar}{|}\n"
+                "\\newcommand{\\VERB}{\\Verb[commandchars=\\\\\\{\\}]}\n"
+                "\\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\\\\{\\}}\n"
+                "\\newenvironment{Shaded}{}{}\n"
+                "\\providecommand{\\AlertTok}[1]{\\textcolor[rgb]{1.00,0.00,0.00}{\\textbf{#1}}}\n"
+                "\\providecommand{\\AnnotationTok}[1]{\\textcolor[rgb]{0.38,0.63,0.69}{\\textbf{\\textit{#1}}}}\n"
+                "\\providecommand{\\AttributeTok}[1]{\\textcolor[rgb]{0.49,0.56,0.16}{#1}}\n"
+                "\\providecommand{\\BaseNTok}[1]{\\textcolor[rgb]{0.25,0.63,0.44}{#1}}\n"
+                "\\providecommand{\\BuiltInTok}[1]{\\textcolor[rgb]{0.00,0.50,0.00}{#1}}\n"
+                "\\providecommand{\\CharTok}[1]{\\textcolor[rgb]{0.25,0.44,0.63}{#1}}\n"
+                "\\providecommand{\\CommentTok}[1]{\\textcolor[rgb]{0.38,0.63,0.69}{\\textit{#1}}}\n"
+                "\\providecommand{\\CommentVarTok}[1]{\\textcolor[rgb]{0.38,0.63,0.69}{\\textbf{\\textit{#1}}}}\n"
+                "\\providecommand{\\ConstantTok}[1]{\\textcolor[rgb]{0.53,0.00,0.00}{#1}}\n"
+                "\\providecommand{\\ControlFlowTok}[1]{\\textcolor[rgb]{0.00,0.44,0.13}{\\textbf{#1}}}\n"
+                "\\providecommand{\\DataTypeTok}[1]{\\textcolor[rgb]{0.56,0.13,0.00}{#1}}\n"
+                "\\providecommand{\\DecValTok}[1]{\\textcolor[rgb]{0.25,0.63,0.44}{#1}}\n"
+                "\\providecommand{\\DocumentationTok}[1]{\\textcolor[rgb]{0.73,0.13,0.13}{\\textit{#1}}}\n"
+                "\\providecommand{\\ErrorTok}[1]{\\textcolor[rgb]{1.00,0.00,0.00}{\\textbf{#1}}}\n"
+                "\\providecommand{\\ExtensionTok}[1]{#1}\n"
+                "\\providecommand{\\FloatTok}[1]{\\textcolor[rgb]{0.25,0.63,0.44}{#1}}\n"
+                "\\providecommand{\\FunctionTok}[1]{\\textcolor[rgb]{0.02,0.16,0.49}{#1}}\n"
+                "\\providecommand{\\ImportTok}[1]{\\textcolor[rgb]{0.00,0.50,0.00}{\\textbf{#1}}}\n"
+                "\\providecommand{\\InformationTok}[1]{\\textcolor[rgb]{0.38,0.63,0.69}{\\textbf{\\textit{#1}}}}\n"
+                "\\providecommand{\\KeywordTok}[1]{\\textcolor[rgb]{0.00,0.44,0.13}{\\textbf{#1}}}\n"
+                "\\providecommand{\\NormalTok}[1]{#1}\n"
+                "\\providecommand{\\OperatorTok}[1]{\\textcolor[rgb]{0.40,0.40,0.40}{#1}}\n"
+                "\\providecommand{\\OtherTok}[1]{\\textcolor[rgb]{0.00,0.44,0.13}{#1}}\n"
+                "\\providecommand{\\PreprocessorTok}[1]{\\textcolor[rgb]{0.74,0.48,0.00}{#1}}\n"
+                "\\providecommand{\\RegionMarkerTok}[1]{#1}\n"
+                "\\providecommand{\\SpecialCharTok}[1]{\\textcolor[rgb]{0.25,0.44,0.63}{#1}}\n"
+                "\\providecommand{\\SpecialStringTok}[1]{\\textcolor[rgb]{0.73,0.40,0.53}{#1}}\n"
+                "\\providecommand{\\StringTok}[1]{\\textcolor[rgb]{0.25,0.44,0.63}{#1}}\n"
+                "\\providecommand{\\VariableTok}[1]{\\textcolor[rgb]{0.10,0.09,0.49}{#1}}\n"
+                "\\providecommand{\\VerbatimStringTok}[1]{\\textcolor[rgb]{0.25,0.44,0.63}{#1}}\n"
+                "\\providecommand{\\WarningTok}[1]{\\textcolor[rgb]{0.38,0.63,0.69}{\\textbf{\\textit{#1}}}}\n"
+            )
             bib_block = (
-                "\\bibliographystyle{plain}\n\\bibliography{library}\n"
+                "\\nocite{*}\n\\bibliographystyle{plain}\n\\bibliography{library}\n"
                 if (compile_root / "library.bib").exists()
                 else ""
             )
 
             if effective_mode == "slides":
-                entry_content = f"{doc_class}\n{pkg_input}\\usetheme{{default}}\n{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\begin{{frame}}[plain]\n\\titlepage\n\\end{{frame}}\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
+                entry_content = f"{doc_class}\n{pkg_input}{pandoc_compat}\\usetheme{{default}}\n{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\begin{{frame}}[plain]\n\\titlepage\n\\end{{frame}}\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
             else:
-                entry_content = f"{doc_class}\n{pkg_input}{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\maketitle\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
+                entry_content = f"{doc_class}\n{pkg_input}{pandoc_compat}{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\maketitle\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
 
             entry_path.write_text(entry_content, encoding="utf-8")
             success = compile_tectonic(entry_path, out_pdf, quiet=quiet, preexec=preexec)
