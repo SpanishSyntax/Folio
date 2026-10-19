@@ -93,6 +93,16 @@ def parse_frontmatter(file_path: Path) -> dict[str, str]:
                     line = line.strip()
                     if line and not line.startswith("#") and ":" in line:
                         k, v = line.split(":", 1)
+                        v = v.strip()
+                        # Strip inline comments (e.g. `engine: "latex" # Options: typst | latex`)
+                        if "#" in v:
+                            if (v.startswith('"') and '"' in v[1:]) or (v.startswith("'") and "'" in v[1:]):
+                                q = v[0]
+                                close_idx = v.find(q, 1)
+                                if close_idx != -1:
+                                    v = v[1:close_idx]
+                            else:
+                                v = v.split("#", 1)[0].strip()
                         fm[k.strip().lower().replace("-", "_")] = v.strip().strip("\"'")
     except Exception:
         pass
