@@ -99,6 +99,25 @@ def parse_frontmatter(file_path: Path) -> dict[str, str]:
     return fm
 
 
+def build_typst_kwargs(fm: dict[str, str], rel_md_path: str) -> str:
+    """Builds keyword arguments string for Typst show rule from frontmatter."""
+    kwargs = [f'md-path: "{rel_md_path}"']
+    for k, v in fm.items():
+        if k in ("mode", "preset", "template"):
+            continue
+        arg_name = k.replace("_", "-")
+        if arg_name.replace("-", "").isidentifier():
+            v_str = str(v).strip()
+            if v_str.lower() == "none":
+                kwargs.append(f"{arg_name}: none")
+            elif v_str.lower() in ("true", "false"):
+                kwargs.append(f"{arg_name}: {v_str.lower()}")
+            else:
+                escaped_v = v_str.replace("\\", "\\\\").replace('"', '\\"')
+                kwargs.append(f'{arg_name}: "{escaped_v}"')
+    return ", ".join(kwargs)
+
+
 def normalize_mode(mode_val: str | None, preset_val: str | None = None) -> str:
     """Normalizes mode aliases to canonical modes: 'report', 'slides', or 'paper'."""
     val = (mode_val or "").strip().lower()
@@ -358,8 +377,14 @@ def build_pdf(
     except ValueError:
         rel_md_path = str(target_path)
 
-    body_path = Path("_body.typ")
-    entry_path = Path("_entry.typ")
+    try:
+        rel_template_path = os.path.relpath(template_path.resolve(), compile_root)
+    except ValueError:
+        rel_template_path = template_path.name
+
+    body_path = compile_root / "_body.typ"
+    entry_path = compile_root / "_entry.typ"
+    typst_kwargs = build_typst_kwargs(fm, rel_md_path)
 
     try:
         if not quiet:
@@ -387,12 +412,12 @@ def build_pdf(
 
                 body_content = body_path.read_text(encoding="utf-8")
                 body_path.write_text(
-                    f'#import "{template_path.name}": *\n\n{body_content}',
+                    f'#import "{rel_template_path}": *\n\n{body_content}',
                     encoding="utf-8",
                 )
 
                 entry_path.write_text(
-                    f'#import "{template_path.name}": *\n#show: doc => {entry_func}(md-path: "{rel_md_path}", doc)\n#include "{body_path.name}"\n',
+                    f'#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"\n',
                     encoding="utf-8",
                 )
 
@@ -438,12 +463,12 @@ def build_pdf(
 
             body_content = body_path.read_text(encoding="utf-8")
             body_path.write_text(
-                f'#import "{template_path.name}": *\n\n{body_content}',
+                f'#import "{rel_template_path}": *\n\n{body_content}',
                 encoding="utf-8",
             )
 
             entry_path.write_text(
-                f'#import "{template_path.name}": *\n#show: doc => {entry_func}(md-path: "{rel_md_path}", doc)\n#include "{body_path.name}"\n',
+                f'#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"\n',
                 encoding="utf-8",
             )
 
