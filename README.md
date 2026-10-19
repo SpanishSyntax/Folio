@@ -13,13 +13,13 @@ Folio is an opinionated, ultra-fast document compiler that turns standard GitHub
   - 📄 **`report` (Default)**: Clean minimal sans-serif report layout with Inter, dynamic margins, headers, footers, and callouts (A4/Letter).
   - 🖥️ **`slides` (16:9 Presentation)**: Ultra-crisp 16:9 widescreen presentation deck (1920×1080) with dark/light themes, slide counters, and slide breaks on `---` or headers.
   - 📜 **`paper` (IEEE Academic Paper)**: Two-column camera-ready layout with IEEE Roman section numbering (`I.`, `II.`, `A.`), full-width title/abstract/keywords, and serif typography.
-- ⚡ **Multi-Format & Multi-Engine**:
-  - Compiles **Markdown** via Pandoc + Typst.
-  - Compiles native **`.typ`** files directly with Typst.
-  - Compiles native **`.tex`** files directly with Tectonic (zero auxiliary file clutter).
-- 📑 **YAML Frontmatter Integration**: Control title, authors, affiliations, operating mode (`mode: slides`), preset (`preset: ieee`), theme (`theme: dark`), and geometry directly in Markdown frontmatter.
+- ⚡ **Multi-Format & Polyglot Engine**:
+  - Compiles **Markdown** via Typst or LaTeX/Tectonic based on frontmatter `engine: typst | latex` (or `--engine`).
+  - Compiles native **`.typ`** files directly with Typst (`typst:report`, `typst:slides`, `typst:paper`).
+  - Compiles native **`.tex`** files directly with Tectonic (`latex:report`, `latex:slides`, `latex:paper`).
+- 📑 **YAML Frontmatter Integration**: Control title, authors, affiliations, operating mode (`mode: slides`), preset (`preset: ieee`), engine (`engine: typst` or `latex`), theme (`theme: dark`), and geometry directly in Markdown frontmatter.
 - 👁️ **Live Watch Mode (`folio <doc> -w`)**: Continuous background watcher that detects file saves and automatically re-compiles the PDF in milliseconds.
-- 🤝 **Flaker Integration**: Scaffolding is completely delegated to [Flaker](https://github.com/SpanishSyntax/Flaker) (`flaker init folio`, `flaker project folio`, `flaker new folio`), keeping Folio purely focused on compiling and watching.
+- 🤝 **Flaker Integration**: Scaffolding is completely delegated to [Flaker](https://github.com/SpanishSyntax/Flaker) (`flaker init md:report`, `flaker init typst:slides`, `flaker init latex:paper`), providing the full 9-way document scaffolding matrix.
 
 ---
 
@@ -39,11 +39,11 @@ flaker new folio
 
 2. **Compile with Folio**:
 ```bash
-# Auto-discover input.md, slides.md, or paper.md in current directory
+# Auto-discover report.md, slides.md, or paper.md in current directory
 folio
 
 # Compile a report
-folio input.md
+folio report.md
 
 # Compile 16:9 presentation slides with live watch mode
 folio slides.md -m slides -w

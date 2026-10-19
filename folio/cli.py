@@ -68,7 +68,7 @@ USAGE = f"""{ui.badge()} {ui.bold("Polyglot Document & Presentation Compiler (Ty
   Workspace scaffolding and templates are managed by {ui.bold("flaker")}:
   • flaker init folio     # Bootstrap DevShell + template.typ, slides.typ, ieee.typ
   • flaker project folio  # Drop template foundations into current workspace
-  • flaker new folio      # Drop starter documents (input.md, slides.md, paper.md)
+  • flaker new folio      # Drop starter documents (report.md, slides.md, paper.md)
 
 {ui.blue("Examples:")}
   folio                              # Auto-discover target document in workspace
@@ -139,7 +139,7 @@ def find_target_file(arg_path: str | None) -> Path:
             sys.exit(1)
         return target
 
-    for candidate in ("input.md", "slides.md", "paper.md", "main.typ", "main.tex"):
+    for candidate in ("report.md", "input.md", "slides.md", "paper.md", "main.typ", "main.tex", "report.tex", "slides.tex"):
         if Path(candidate).exists():
             return Path(candidate)
 
@@ -200,13 +200,13 @@ def resolve_typst_template(
 
     # Look for local template in workspace
     local_candidates = {
-        "report": ["template.typ", "report.typ"],
+        "report": ["report.typ", "template.typ"],
         "slides": ["slides.typ", "presentation.typ", "template.typ"],
         "paper": ["ieee.typ", "paper.typ", "template.typ"],
     }
 
     expected_name = {
-        "report": "template.typ",
+        "report": "report.typ",
         "slides": "slides.typ",
         "paper": "ieee.typ",
     }[mode]
@@ -364,14 +364,82 @@ def build_pdf(
             subprocess.Popen([open_cmd, out_pdf], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return success
 
-    # Markdown -> Typst pipeline
+    # Markdown pipeline
     fm = parse_frontmatter(target_path)
+    effective_engine = (engine or fm.get("engine") or "typst").lower().strip()
     effective_mode = normalize_mode(mode or fm.get("mode"), preset or fm.get("preset"))
+    compile_root = Path(root_path).resolve() if root_path else Path(".").resolve()
+
+    # Branch A: Markdown -> LaTeX -> Tectonic
+    if effective_engine in ("latex", "tectonic", "tex"):
+        body_path = compile_root / "_body.tex"
+        entry_path = compile_root / "_entry.tex"
+        try:
+            if not quiet:
+                with ui.spinner(f"Parsing '{ui.bold(target_path.name)}' ({ui.bold_cyan(effective_mode)}) via Pandoc (LaTeX)...") as sp:
+                    res_p = subprocess.run(
+                        ["pandoc", str(target_path), "-f", "markdown", "-t", "latex", "-o", str(body_path)],
+                        capture_output=True,
+                        text=True,
+                        preexec_fn=preexec,
+                    )
+                    if res_p.returncode != 0:
+                        sp.stop("Pandoc conversion failed.", ok=False)
+                        ui.error_panel("Pandoc Conversion Error", res_p.stderr.strip())
+                        return False
+            else:
+                res_p = subprocess.run(
+                    ["pandoc", str(target_path), "-f", "markdown", "-t", "latex", "-o", str(body_path)],
+                    capture_output=True,
+                    text=True,
+                    preexec_fn=preexec,
+                )
+                if res_p.returncode != 0:
+                    ui.error_panel("Pandoc Conversion Error", res_p.stderr.strip())
+                    return False
+
+            doc_classes = {
+                "paper": "\\documentclass[10pt, journal, compsoc]{IEEEtran}",
+                "slides": "\\documentclass[aspectratio=169, 11pt]{beamer}",
+                "report": "\\documentclass[11pt, a4paper]{report}",
+            }
+            doc_class = doc_classes.get(effective_mode, "\\documentclass[11pt, a4paper]{report}")
+            pkg_input = "\\input{packages.tex}\n" if (compile_root / "packages.tex").exists() else ""
+            title_val = fm.get("title", "")
+            author_val = fm.get("author", "")
+            date_val = fm.get("date", "")
+            title_cmd = f"\\title{{{title_val}}}\n" if title_val else ""
+            author_cmd = f"\\author{{{author_val}}}\n" if author_val else ""
+            date_cmd = f"\\date{{{date_val}}}\n" if date_val else ""
+            bib_block = (
+                "\\bibliographystyle{plain}\n\\bibliography{library}\n"
+                if (compile_root / "library.bib").exists()
+                else ""
+            )
+
+            if effective_mode == "slides":
+                entry_content = f"{doc_class}\n{pkg_input}\\usetheme{{default}}\n{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\begin{{frame}}[plain]\n\\titlepage\n\\end{{frame}}\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
+            else:
+                entry_content = f"{doc_class}\n{pkg_input}{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\maketitle\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
+
+            entry_path.write_text(entry_content, encoding="utf-8")
+            success = compile_tectonic(entry_path, out_pdf, quiet=quiet, preexec=preexec)
+            if success and open_after:
+                open_cmd = "xdg-open" if sys.platform.startswith("linux") else "open"
+                subprocess.Popen([open_cmd, out_pdf], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return success
+        finally:
+            for temp_file in [entry_path, body_path]:
+                if temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except OSError:
+                        pass
+
+    # Branch B: Markdown -> Typst pipeline
     template_path, entry_func = resolve_typst_template(
         effective_mode, custom_template or fm.get("template")
     )
-
-    compile_root = Path(root_path).resolve() if root_path else Path(".").resolve()
     try:
         rel_md_path = os.path.relpath(target_path.resolve(), compile_root)
     except ValueError:
@@ -385,6 +453,12 @@ def build_pdf(
     body_path = compile_root / "_body.typ"
     entry_path = compile_root / "_entry.typ"
     typst_kwargs = build_typst_kwargs(fm, rel_md_path)
+    packages_import = '#import "packages.typ": *\n' if (compile_root / "packages.typ").exists() else ""
+    template_import = (
+        '#import "template.typ": *\n'
+        if (compile_root / "template.typ").exists() and rel_template_path != "template.typ"
+        else ""
+    )
 
     try:
         if not quiet:
@@ -412,12 +486,12 @@ def build_pdf(
 
                 body_content = body_path.read_text(encoding="utf-8")
                 body_path.write_text(
-                    f'#import "{rel_template_path}": *\n\n{body_content}',
+                    f'{template_import}{packages_import}#import "{rel_template_path}": *\n\n{body_content}',
                     encoding="utf-8",
                 )
 
                 entry_path.write_text(
-                    f'#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"\n',
+                    f'{template_import}{packages_import}#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"\n',
                     encoding="utf-8",
                 )
 
@@ -463,12 +537,12 @@ def build_pdf(
 
             body_content = body_path.read_text(encoding="utf-8")
             body_path.write_text(
-                f'#import "{rel_template_path}": *\n\n{body_content}',
+                f'{template_import}{packages_import}#import "{rel_template_path}": *\n\n{body_content}',
                 encoding="utf-8",
             )
 
             entry_path.write_text(
-                f'#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"\n',
+                f'{template_import}{packages_import}#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"\n',
                 encoding="utf-8",
             )
 
@@ -604,7 +678,7 @@ def main():
             "Scaffolding is handled by Flaker. Run:\n"
             f"  • {ui.bold('flaker init folio')}     # Bootstrap DevShell + template.typ, slides.typ, ieee.typ\n"
             f"  • {ui.bold('flaker project folio')}  # Scaffold template files into current directory\n"
-            f"  • {ui.bold('flaker new folio')}      # Drop starter documents (input.md, slides.md, paper.md)",
+            f"  • {ui.bold('flaker new folio')}      # Drop starter documents (report.md, slides.md, paper.md)",
             symbol="❄️ ",
         )
         sys.exit(0)
