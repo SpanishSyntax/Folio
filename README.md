@@ -27,7 +27,7 @@ Folio is an opinionated, ultra-fast document compiler that turns standard GitHub
 
 1. **Scaffold workspace using Flaker**:
 ```bash
-# Initialize DevShell + templates (template.typ, slides.typ, ieee.typ) + starters
+# Initialize DevShell + templates (report.typ, slides.typ, paper.typ) + starters
 flaker init folio
 
 # Or drop templates into an existing workspace
@@ -52,8 +52,8 @@ folio slides.md -m slides -w
 folio paper.md -m paper
 
 # Directly compile native Typst or LaTeX documents
-folio main.typ -w
-folio main.tex -w
+folio report.typ -w
+folio report.tex -w
 ```
 
 ---

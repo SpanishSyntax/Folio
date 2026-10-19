@@ -139,7 +139,12 @@ def find_target_file(arg_path: str | None) -> Path:
             sys.exit(1)
         return target
 
-    for candidate in ("report.md", "input.md", "slides.md", "paper.md", "main.typ", "main.tex", "report.tex", "slides.tex"):
+    for candidate in (
+        "report.md", "input.md", "slides.md", "paper.md",
+        "report.typ", "slides.typ", "paper.typ",
+        "report.tex", "slides.tex", "paper.tex",
+        "main.typ", "main.tex",
+    ):
         if Path(candidate).exists():
             return Path(candidate)
 
@@ -202,13 +207,13 @@ def resolve_typst_template(
     local_candidates = {
         "report": ["report.typ", "template.typ"],
         "slides": ["slides.typ", "presentation.typ", "template.typ"],
-        "paper": ["ieee.typ", "paper.typ", "template.typ"],
+        "paper": ["paper.typ", "ieee.typ", "template.typ"],
     }
 
     expected_name = {
         "report": "report.typ",
         "slides": "slides.typ",
-        "paper": "ieee.typ",
+        "paper": "paper.typ",
     }[mode]
 
     for cand in local_candidates[mode]:
@@ -608,7 +613,15 @@ def watch_pdf(
     watched_files = [target_path]
     if custom_template and Path(custom_template).exists():
         watched_files.append(Path(custom_template))
-    for tpl_name in ("template.typ", "slides.typ", "ieee.typ"):
+    for tpl_name in (
+        "report.typ",
+        "slides.typ",
+        "paper.typ",
+        "packages.typ",
+        "packages.tex",
+        "template.typ",
+        "ieee.typ",
+    ):
         if Path(tpl_name).exists():
             watched_files.append(Path(tpl_name))
 
@@ -676,7 +689,7 @@ def main():
     if cmd == "init":
         ui.info(
             "Scaffolding is handled by Flaker. Run:\n"
-            f"  • {ui.bold('flaker init folio')}     # Bootstrap DevShell + template.typ, slides.typ, ieee.typ\n"
+            f"  • {ui.bold('flaker init folio')}     # Bootstrap DevShell + report.typ, slides.typ, paper.typ\n"
             f"  • {ui.bold('flaker project folio')}  # Scaffold template files into current directory\n"
             f"  • {ui.bold('flaker new folio')}      # Drop starter documents (report.md, slides.md, paper.md)",
             symbol="❄️ ",
