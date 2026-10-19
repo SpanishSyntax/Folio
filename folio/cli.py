@@ -421,10 +421,16 @@ def build_pdf(
             }
             doc_class = doc_classes.get(effective_mode, "\\documentclass[11pt, a4paper]{report}")
             pkg_input = "\\input{packages.tex}\n" if (compile_root / "packages.tex").exists() else ""
-            title_val = fm.get("title", "")
-            author_val = fm.get("author", "")
-            date_val = fm.get("date", "")
-            dep_val = fm.get("dependency", "")
+            def tex_safe(val: Any) -> str:
+                if not val:
+                    return ""
+                import re
+                return re.sub(r'(?<!\\)&', r'\&', str(val).strip())
+
+            title_val = tex_safe(fm.get("title", ""))
+            author_val = tex_safe(fm.get("author", ""))
+            date_val = tex_safe(fm.get("date", ""))
+            dep_val = tex_safe(fm.get("dependency", ""))
             email_val = fm.get("email", "")
             abstract_val = fm.get("abstract", "")
             keywords_val = fm.get("keywords", "")
