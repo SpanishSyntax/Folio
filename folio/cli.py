@@ -424,9 +424,55 @@ def build_pdf(
             title_val = fm.get("title", "")
             author_val = fm.get("author", "")
             date_val = fm.get("date", "")
+            dep_val = fm.get("dependency", "")
+            email_val = fm.get("email", "")
+            abstract_val = fm.get("abstract", "")
+            keywords_val = fm.get("keywords", "")
+
             title_cmd = f"\\title{{{title_val}}}\n" if title_val else ""
-            author_cmd = f"\\author{{{author_val}}}\n" if author_val else ""
             date_cmd = f"\\date{{{date_val}}}\n" if date_val else ""
+
+            if effective_mode == "paper":
+                if dep_val and email_val:
+                    thanks_str = f"\\thanks{{The author is with the {dep_val} (e-mail: {email_val}).}}"
+                elif dep_val:
+                    thanks_str = f"\\thanks{{The author is with the {dep_val}.}}"
+                elif email_val:
+                    thanks_str = f"\\thanks{{e-mail: {email_val}}}"
+                else:
+                    thanks_str = ""
+                author_cmd = (
+                    f"\\author{{{author_val},~\\IEEEmembership{{Member,~IEEE}}%{thanks_str}}}\n"
+                    if author_val
+                    else ""
+                )
+                institute_cmd = ""
+            elif effective_mode == "report":
+                if author_val and dep_val:
+                    author_cmd = f"\\author{{{author_val} \\\\ \\large \\textit{{{dep_val}}}}}\n"
+                elif author_val:
+                    author_cmd = f"\\author{{{author_val}}}\n"
+                else:
+                    author_cmd = ""
+                institute_cmd = ""
+            elif effective_mode == "slides":
+                author_cmd = f"\\author{{{author_val}}}\n" if author_val else ""
+                institute_cmd = f"\\institute{{{dep_val}}}\n" if dep_val else ""
+            else:
+                author_cmd = f"\\author{{{author_val}}}\n" if author_val else ""
+                institute_cmd = ""
+
+            abstract_cmd = (
+                f"\\begin{{abstract}}\n{abstract_val}\n\\end{{abstract}}\n"
+                if (abstract_val and effective_mode == "paper")
+                else ""
+            )
+            keywords_cmd = (
+                f"\\begin{{IEEEkeywords}}\n{keywords_val}\n\\end{{IEEEkeywords}}\n"
+                if (keywords_val and effective_mode == "paper")
+                else ""
+            )
+
             pandoc_compat = (
                 "\\usepackage{longtable}\n"
                 "\\usepackage{fancyvrb}\n"
@@ -491,9 +537,40 @@ def build_pdf(
                 layout_customization = ""
 
             if effective_mode == "slides":
-                entry_content = f"{doc_class}\n{pkg_input}{pandoc_compat}\\usetheme{{default}}\n{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\begin{{frame}}[plain]\n\\titlepage\n\\end{{frame}}\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
+                theme_val = fm.get("theme", "light")
+                if theme_val == "dark":
+                    theme_styling = (
+                        "\\usetheme{default}\n"
+                        "\\usecolortheme{dove}\n"
+                        "\\usepackage{etoolbox}\n"
+                        "\\definecolor{accentblue}{HTML}{2997FF}\n"
+                        "\\definecolor{darkbg}{HTML}{161618}\n"
+                        "\\setbeamercolor{background canvas}{bg=black}\n"
+                        "\\setbeamercolor{normal text}{fg=white}\n"
+                        "\\setbeamercolor{title}{fg=white}\n"
+                        "\\setbeamercolor{frametitle}{fg=white}\n"
+                        "\\setbeamercolor{subtitle}{fg=white!70!black}\n"
+                        "\\setbeamercolor{author}{fg=white!70!black}\n"
+                        "\\setbeamercolor{institute}{fg=white!70!black}\n"
+                        "\\setbeamercolor{date}{fg=white!70!black}\n"
+                        "\\setbeamercolor{structure}{fg=accentblue}\n"
+                        "\\setbeamercolor{item}{fg=white}\n"
+                        "\\setbeamercolor{block title}{bg=darkbg, fg=white}\n"
+                        "\\setbeamercolor{block body}{bg=darkbg, fg=white}\n"
+                        "\\usebeamercolor[fg]{normal text}\n"
+                    )
+                else:
+                    theme_styling = (
+                        "\\usetheme{default}\n"
+                        "\\usecolortheme{dove}\n"
+                        "\\definecolor{accentblue}{HTML}{0071E3}\n"
+                        "\\setbeamercolor{title}{fg=black}\n"
+                        "\\setbeamercolor{frametitle}{fg=black}\n"
+                        "\\setbeamercolor{structure}{fg=accentblue}\n"
+                    )
+                entry_content = f"{doc_class}\n{pkg_input}{pandoc_compat}{theme_styling}{title_cmd}{author_cmd}{institute_cmd}{date_cmd}\\begin{{document}}\n\\begin{{frame}}[plain]\n\\titlepage\n\\end{{frame}}\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
             else:
-                entry_content = f"{doc_class}\n{pkg_input}{pandoc_compat}{layout_customization}{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\maketitle\n\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
+                entry_content = f"{doc_class}\n{pkg_input}{pandoc_compat}{layout_customization}{title_cmd}{author_cmd}{date_cmd}\\begin{{document}}\n\\maketitle\n{abstract_cmd}{keywords_cmd}\\input{{{body_path.name}}}\n{bib_block}\\end{{document}}\n"
 
             entry_path.write_text(entry_content, encoding="utf-8")
             success = compile_tectonic(entry_path, out_pdf, quiet=quiet, preexec=preexec)
