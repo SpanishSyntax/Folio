@@ -109,13 +109,28 @@ def parse_frontmatter(file_path: Path) -> dict[str, str]:
     return fm
 
 
-def build_typst_kwargs(fm: dict[str, str], rel_md_path: str) -> str:
+def build_typst_kwargs(
+    fm: dict[str, str],
+    rel_md_path: str,
+    compile_root: Path | None = None,
+    mode: str = "report",
+) -> str:
     """Builds keyword arguments string for Typst show rule from frontmatter."""
     kwargs = [f'md-path: "{rel_md_path}"']
+    has_bib = False
     for k, v in fm.items():
         if k in ("mode", "preset", "template"):
             continue
         arg_name = k.replace("_", "-")
+        if arg_name == "bibliography":
+            has_bib = True
+            v_str = str(v).strip()
+            if v_str.lower() == "none":
+                kwargs.append("bibliography: none")
+            else:
+                clean_bib = v_str.strip('"\'')
+                kwargs.append(f'bibliography: bibliography("{clean_bib}")')
+            continue
         if arg_name.replace("-", "").isidentifier():
             v_str = str(v).strip()
             if v_str.lower() == "none":
@@ -125,6 +140,10 @@ def build_typst_kwargs(fm: dict[str, str], rel_md_path: str) -> str:
             else:
                 escaped_v = v_str.replace("\\", "\\\\").replace('"', '\\"')
                 kwargs.append(f'{arg_name}: "{escaped_v}"')
+
+    if not has_bib and mode == "paper" and compile_root and (compile_root / "library.bib").exists():
+        kwargs.append('bibliography: bibliography("library.bib")')
+
     return ", ".join(kwargs)
 
 
@@ -525,8 +544,9 @@ def build_pdf(
                 "\\providecommand{\\VerbatimStringTok}[1]{\\textcolor[rgb]{0.25,0.44,0.63}{#1}}\n"
                 "\\providecommand{\\WarningTok}[1]{\\textcolor[rgb]{0.38,0.63,0.69}{\\textbf{\\textit{#1}}}}\n"
             )
+            bib_style = "IEEEtran" if effective_mode == "paper" else "plain"
             bib_block = (
-                "\\nocite{*}\n\\bibliographystyle{plain}\n\\bibliography{library}\n"
+                f"\\nocite{{*}}\n\\bibliographystyle{{{bib_style}}}\n\\bibliography{{library}}\n"
                 if (compile_root / "library.bib").exists()
                 else ""
             )
@@ -608,11 +628,18 @@ def build_pdf(
 
     body_path = compile_root / "_body.typ"
     entry_path = compile_root / "_entry.typ"
-    typst_kwargs = build_typst_kwargs(fm, rel_md_path)
+    typst_kwargs = build_typst_kwargs(
+        fm, rel_md_path, compile_root=compile_root, mode=effective_mode
+    )
     packages_import = '#import "packages.typ": *\n' if (compile_root / "packages.typ").exists() else ""
     template_import = (
         '#import "template.typ": *\n'
         if (compile_root / "template.typ").exists() and rel_template_path != "template.typ"
+        else ""
+    )
+    bib_inclusion = (
+        f'\n#bibliography("library.bib", title: "References")\n'
+        if (compile_root / "library.bib").exists() and effective_mode != "paper"
         else ""
     )
 
@@ -647,7 +674,7 @@ def build_pdf(
                 )
 
                 entry_path.write_text(
-                    f'{template_import}{packages_import}#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"\n',
+                    f'{template_import}{packages_import}#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"{bib_inclusion}\n',
                     encoding="utf-8",
                 )
 
@@ -698,7 +725,7 @@ def build_pdf(
             )
 
             entry_path.write_text(
-                f'{template_import}{packages_import}#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"\n',
+                f'{template_import}{packages_import}#import "{rel_template_path}": *\n#show: doc => {entry_func}({typst_kwargs}, doc)\n#include "{body_path.name}"{bib_inclusion}\n',
                 encoding="utf-8",
             )
 
