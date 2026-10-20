@@ -26,7 +26,7 @@ from folio.discovery import (
 )
 from folio.frontmatter import build_typst_kwargs, normalize_mode, parse_frontmatter
 from folio.templates_latex import tex_safe
-from folio.ui import ui
+from folio.ui import handle_color_args, ui
 from folio.watcher import watch_pdf
 
 __all__ = [
@@ -96,17 +96,6 @@ USAGE = f"""{ui.badge()} {ui.bold("Polyglot Document & Presentation Compiler (Ty
   folio main.typ -w                  # Direct Typst compilation with live reload
   folio main.tex                     # Direct LaTeX compilation via Tectonic
 """
-
-
-def handle_color_args(argv: Sequence[str] | None = None) -> None:
-    args = argv if argv is not None else sys.argv[1:]
-    for i, arg in enumerate(args):
-        if arg == "--no-color":
-            ui.set_color_mode("never")
-        elif arg.startswith("--color="):
-            ui.set_color_mode(arg.split("=", 1)[1])
-        elif arg == "--color" and i + 1 < len(args):
-            ui.set_color_mode(args[i + 1])
 
 
 def _print_init_info() -> None:
