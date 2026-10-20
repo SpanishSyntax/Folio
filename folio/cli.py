@@ -1,5 +1,6 @@
 import ctypes
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -43,6 +44,7 @@ USAGE = f"""{ui.badge()} {ui.bold("Polyglot Document & Presentation Compiler (Ty
 {ui.blue("Usage:")}
   folio [file] [options]             Build PDF from Markdown, Typst, or LaTeX
   folio build [file] [options]       Explicit build command
+  folio assemble [dir] [options]     Assemble modular chapters into master Markdown
 
 {ui.blue("Operating Modes:")}
   -m, --mode MODE        Document operating mode:
@@ -73,6 +75,8 @@ USAGE = f"""{ui.badge()} {ui.bold("Polyglot Document & Presentation Compiler (Ty
 {ui.blue("Examples:")}
   folio                              # Auto-discover target document in workspace
   folio report.md                    # Compile report.md -> report.pdf (using template.typ)
+  folio assemble chapters            # Assemble chapters/*.md -> report.md (with pagebreaks)
+  folio assemble modules -m slides   # Assemble modules/*.md -> slides.md
   folio deck.md -m slides -w         # Live watch 16:9 presentation (using slides.typ)
   folio paper.md -m paper            # Compile IEEE 2-column paper (using ieee.typ)
   folio main.typ -w                  # Direct Typst compilation with live reload
@@ -920,6 +924,118 @@ def watch_pdf(
         ui.info("Watch mode stopped.", symbol="🛑")
 
 
+
+def assemble_documents(
+    chapters_dir: str = "chapters",
+    output_filename: str | None = None,
+    mode: str | None = None,
+    title: str | None = None,
+    subtitle: str | None = None,
+    author: str | None = None,
+    dependency: str | None = None,
+    date: str | None = None,
+    engine: str | None = None,
+    theme: str | None = None,
+    aspect_ratio: str | None = None,
+    pattern: str = "*.md",
+    add_pagebreaks: bool = True,
+) -> bool:
+    """Assembles modular chapter Markdown files into a unified document with consolidated frontmatter."""
+    work_path = Path(".").resolve()
+    ch_path = Path(chapters_dir)
+    if not ch_path.is_dir():
+        ui.error(f"Chapters directory '{chapters_dir}' not found.")
+        return False
+
+    def _natural_key(p: Path) -> list[Any]:
+        return [
+            int(c) if c.isdigit() else c.lower()
+            for c in re.split(r"(\d+)", p.name)
+        ]
+
+    matched_files = sorted(
+        [f for f in ch_path.glob(pattern) if f.is_file()],
+        key=_natural_key,
+    )
+    if not matched_files:
+        ui.error(f"No chapter files matching '{pattern}' found in '{chapters_dir}'.")
+        return False
+
+    final_mode = normalize_mode(mode)
+    if output_filename:
+        out_path = Path(output_filename)
+    else:
+        out_path = Path("slides.md" if final_mode == "slides" else "report.md")
+
+    existing_meta: dict[str, str] = {}
+    if out_path.is_file():
+        existing_meta = parse_frontmatter(out_path)
+
+    default_title = work_path.name.replace("-", " ").replace("_", " ").title()
+    final_title = (title or existing_meta.get("title") or default_title).strip()
+    final_subtitle = (subtitle or existing_meta.get("subtitle") or "").strip()
+    final_author = (author or existing_meta.get("author") or "Author").strip()
+    final_dependency = (dependency or existing_meta.get("dependency") or "").strip()
+    final_date = (date or existing_meta.get("date") or "").strip()
+    final_engine = (engine or existing_meta.get("engine") or "typst").strip().lower()
+
+    fm_lines = ["---", f'title: "{final_title}"']
+    if final_subtitle:
+        fm_lines.append(f'subtitle: "{final_subtitle}"')
+    if final_author:
+        fm_lines.append(f'author: "{final_author}"')
+    if final_dependency:
+        fm_lines.append(f'dependency: "{final_dependency}"')
+    if final_date:
+        fm_lines.append(f'date: "{final_date}"')
+    fm_lines.append(f'mode: "{final_mode}"')
+    fm_lines.append(f'engine: "{final_engine}"')
+
+    if final_mode == "slides":
+        final_theme = (theme or existing_meta.get("theme") or "dark").strip().lower()
+        final_aspect = (aspect_ratio or existing_meta.get("aspect_ratio") or "16-9").strip()
+        fm_lines.append(f'theme: "{final_theme}"')
+        fm_lines.append(f'aspect-ratio: "{final_aspect}"')
+
+    fm_lines.append("---")
+    header_block = "\n".join(fm_lines)
+
+    processed_names: list[str] = []
+    chapter_bodies: list[str] = []
+
+    for cf in matched_files:
+        try:
+            content = cf.read_text(encoding="utf-8")
+        except Exception as exc:
+            ui.error(f"Failed to read chapter file '{cf.name}': {exc}")
+            return False
+
+        clean_body = re.sub(r"^---\s*\n.*?\n---\s*\n?", "", content, flags=re.DOTALL).strip()
+        if clean_body:
+            processed_names.append(cf.name)
+            chapter_bodies.append(clean_body)
+
+    if not chapter_bodies:
+        ui.error(f"All matched chapter files in '{chapters_dir}' were empty.")
+        return False
+
+    if final_mode == "slides":
+        separator = "\n\n---\n\n"
+    elif add_pagebreaks:
+        separator = "\n\n```{=typst}\n#pagebreak()\n```\n\n"
+    else:
+        separator = "\n\n"
+
+    assembled_content = f"{header_block}\n\n" + separator.join(chapter_bodies) + "\n"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(assembled_content, encoding="utf-8")
+
+    ui.success(
+        f"Assembled {ui.bold(str(len(processed_names)))} chapters into {ui.bold(str(out_path))} ({final_mode} mode)"
+    )
+    return True
+
+
 def handle_color_args():
     for i, arg in enumerate(sys.argv[1:]):
         if arg == "--no-color":
@@ -957,6 +1073,104 @@ def main():
             symbol="❄️ ",
         )
         sys.exit(0)
+
+    if cmd == "assemble":
+        chapters_dir = "chapters"
+        out_fn = None
+        asm_mode = None
+        asm_title = None
+        asm_sub = None
+        asm_author = None
+        asm_dep = None
+        asm_date = None
+        asm_engine = None
+        asm_theme = None
+        asm_aspect = None
+        asm_pat = "*.md"
+        add_pb = True
+
+        j = 0
+        while j < len(rest):
+            arg = rest[j]
+            if arg in ("-o", "--output"):
+                if j + 1 < len(rest):
+                    out_fn = rest[j + 1]
+                    j += 1
+            elif arg.startswith("--output="):
+                out_fn = arg.split("=", 1)[1]
+            elif arg in ("-m", "--mode"):
+                if j + 1 < len(rest):
+                    asm_mode = rest[j + 1]
+                    j += 1
+            elif arg.startswith("--mode="):
+                asm_mode = arg.split("=", 1)[1]
+            elif arg.startswith("--title="):
+                asm_title = arg.split("=", 1)[1]
+            elif arg == "--title" and j + 1 < len(rest):
+                asm_title = rest[j + 1]
+                j += 1
+            elif arg.startswith("--subtitle="):
+                asm_sub = arg.split("=", 1)[1]
+            elif arg == "--subtitle" and j + 1 < len(rest):
+                asm_sub = rest[j + 1]
+                j += 1
+            elif arg.startswith("--author="):
+                asm_author = arg.split("=", 1)[1]
+            elif arg == "--author" and j + 1 < len(rest):
+                asm_author = rest[j + 1]
+                j += 1
+            elif arg.startswith("--dependency="):
+                asm_dep = arg.split("=", 1)[1]
+            elif arg == "--dependency" and j + 1 < len(rest):
+                asm_dep = rest[j + 1]
+                j += 1
+            elif arg.startswith("--date="):
+                asm_date = arg.split("=", 1)[1]
+            elif arg == "--date" and j + 1 < len(rest):
+                asm_date = rest[j + 1]
+                j += 1
+            elif arg.startswith("--engine="):
+                asm_engine = arg.split("=", 1)[1]
+            elif arg == "--engine" and j + 1 < len(rest):
+                asm_engine = rest[j + 1]
+                j += 1
+            elif arg.startswith("--theme="):
+                asm_theme = arg.split("=", 1)[1]
+            elif arg == "--theme" and j + 1 < len(rest):
+                asm_theme = rest[j + 1]
+                j += 1
+            elif arg.startswith("--aspect-ratio="):
+                asm_aspect = arg.split("=", 1)[1]
+            elif arg == "--aspect-ratio" and j + 1 < len(rest):
+                asm_aspect = rest[j + 1]
+                j += 1
+            elif arg.startswith("--pattern="):
+                asm_pat = arg.split("=", 1)[1]
+            elif arg == "--pattern" and j + 1 < len(rest):
+                asm_pat = rest[j + 1]
+                j += 1
+            elif arg == "--no-pagebreaks":
+                add_pb = False
+            elif not arg.startswith("-"):
+                chapters_dir = arg
+            j += 1
+
+        ok = assemble_documents(
+            chapters_dir=chapters_dir,
+            output_filename=out_fn,
+            mode=asm_mode,
+            title=asm_title,
+            subtitle=asm_sub,
+            author=asm_author,
+            dependency=asm_dep,
+            date=asm_date,
+            engine=asm_engine,
+            theme=asm_theme,
+            aspect_ratio=asm_aspect,
+            pattern=asm_pat,
+            add_pagebreaks=add_pb,
+        )
+        sys.exit(0 if ok else 1)
 
     rest_args = rest if cmd == "build" else args
 
