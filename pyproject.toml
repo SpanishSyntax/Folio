@@ -22,10 +22,19 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+test = [
+  "pytest>=7.0",
+]
+
 [project.scripts]
 folio = "folio.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["folio*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
 

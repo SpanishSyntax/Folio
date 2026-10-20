@@ -36,6 +36,10 @@
             --prefix PATH : ${lib.makeBinPath [pkgs.pandoc pkgs.typst pkgs.tectonic]}
         '';
 
+        nativeCheckInputs = [
+          pkgs.python3Packages.pytest
+        ];
+
         doCheck = false;
 
         meta = with lib; {
@@ -66,6 +70,7 @@
         packages = with pkgs; [
           python3
           python3Packages.setuptools
+          python3Packages.pytest
           pandoc
           typst
           tectonic
