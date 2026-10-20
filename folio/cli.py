@@ -110,22 +110,29 @@ def _print_init_info() -> None:
 
 def run_interactive_hub(docs: list[Path], user_cfg: dict[str, Any]) -> int:
     """Provides interactive quick actions when Folio is run without arguments."""
-    actions: list[tuple[str, str]] = []
+    actions: list[tuple[str, str, str]] = []
 
     if docs:
         first_doc = docs[0]
-        actions.append(("build", f"Compile '{first_doc.name}' to PDF"))
-        actions.append(("watch", f"Watch & live recompile '{first_doc.name}'"))
+        actions.append(("build", f"Compile '{first_doc.name}' to PDF", "Immediate Typst/LaTeX compilation"))
+        actions.append(("watch", f"Watch & live compile '{first_doc.name}'", "Recompiles instantly on file save"))
         if len(docs) > 1:
-            actions.append(("select_build", f"Pick another document to compile ({len(docs)} found)"))
+            actions.append(("select_build", "Pick from discovered documents...", f"{len(docs)} document targets found"))
     else:
-        actions.append(("init_info", "Show workspace scaffolding hints (Flaker)"))
+        actions.append(("build_custom", "Compile a document to PDF...", "Specify a document file path to compile"))
+        actions.append(("watch_custom", "Watch & live compile a document...", "Live reload a specific document file path"))
 
-    if Path("chapters").is_dir() or Path("modules").is_dir():
-        ch_dir = "chapters" if Path("chapters").is_dir() else "modules"
-        actions.append(("assemble", f"Assemble modular chapters from ./{ch_dir}/"))
+    # Check for chapters / modules directory or offer assemble
+    ch_dirs = [d.name for d in Path(".").iterdir() if d.is_dir() and not d.name.startswith(".")] if Path(".").exists() else []
+    detected_ch = [d for d in ("chapters", "modules", "sections", "parts") if d in ch_dirs]
+    if detected_ch:
+        desc = f"Join markdown files from ./{detected_ch[0]}/ into a master document"
+    else:
+        desc = "Join modular chapter markdown files into a master document"
+    actions.append(("assemble", "Assemble modular chapters (join multiple .md files)", desc))
 
-    actions.append(("exit", "Exit"))
+    actions.append(("init_info", "Workspace scaffolding & templates", "Flaker bootstrap guides and starter templates"))
+    actions.append(("exit", "Exit", "Close Folio"))
 
     choice = ui.select("Folio Quick Actions:", actions)
 
@@ -135,8 +142,14 @@ def run_interactive_hub(docs: list[Path], user_cfg: dict[str, Any]) -> int:
         _print_init_info()
         return 0
     elif choice == "assemble":
-        ch_dir = "chapters" if Path("chapters").is_dir() else "modules"
+        default_dir = detected_ch[0] if detected_ch else "chapters"
+        ch_dir = ui.prompt("Directory containing chapter markdown files", default=default_dir)
         ok = assemble_documents(chapters_dir=ch_dir)
+        if ok and ui.confirm("Compile assembled document to PDF now?", default=True):
+            build_pdf(
+                target_file=None,
+                open_after=bool(user_cfg.get("open", False)),
+            )
         return 0 if ok else 1
     elif choice == "build" and docs:
         ok = build_pdf(
@@ -151,13 +164,40 @@ def run_interactive_hub(docs: list[Path], user_cfg: dict[str, Any]) -> int:
         )
         return 0
     elif choice == "select_build" and docs:
-        options = [(str(d), f"Compile {d.name} ({d.stat().st_size:,} bytes)") for d in docs]
+        options = [
+            (
+                str(d),
+                f"{'📄' if d.suffix == '.md' else ('❄️' if d.suffix == '.typ' else '📜')} {d.name}",
+                f"{d.stat().st_size:,} bytes",
+            )
+            for d in docs
+        ]
         chosen = ui.select("Select document to compile:", options)
         ok = build_pdf(
             target_file=chosen,
             open_after=bool(user_cfg.get("open", False)),
         )
         return 0 if ok else 1
+    elif choice == "build_custom":
+        target = ui.prompt("Document path to compile (.md, .typ, .tex)", default="report.md")
+        if not Path(target).exists():
+            ui.error(f"File not found: '{target}'")
+            return 1
+        ok = build_pdf(
+            target_file=target,
+            open_after=bool(user_cfg.get("open", False)),
+        )
+        return 0 if ok else 1
+    elif choice == "watch_custom":
+        target = ui.prompt("Document path to watch & live compile", default="report.md")
+        if not Path(target).exists():
+            ui.error(f"File not found: '{target}'")
+            return 1
+        watch_pdf(
+            target_file=target,
+            open_after=bool(user_cfg.get("open", False)),
+        )
+        return 0
 
     return 0
 

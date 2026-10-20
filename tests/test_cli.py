@@ -47,3 +47,30 @@ def test_cli_dashboard_no_args(tmp_path: Path, monkeypatch, capsys):
     assert ret == 0
     captured = capsys.readouterr()
     assert "FOLIO DOCUMENT & PRESENTATION COMPILER" in captured.out
+
+
+def test_cli_interactive_hub_exit(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    from folio.ui import ui
+    monkeypatch.setattr(ui, "select", lambda title, options: "exit")
+    ret = main([])
+    assert ret == 0
+
+
+def test_cli_interactive_hub_assemble(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    ch = tmp_path / "chapters"
+    ch.mkdir()
+    (ch / "ch1.md").write_text("# Section 1", encoding="utf-8")
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    from folio.ui import ui
+    monkeypatch.setattr(ui, "select", lambda title, options: "assemble")
+    monkeypatch.setattr(ui, "prompt", lambda title, default: default)
+    monkeypatch.setattr(ui, "confirm", lambda title, default: False)
+
+    ret = main([])
+    assert ret == 0
+    assert (tmp_path / "report.md").exists()
+
